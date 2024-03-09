@@ -1,6 +1,6 @@
-from audio_loader import load_audio
-from frequency_extraction import FrequencyExtraction
-from tone_detection import detect_quickcall, detect_long_tones, detect_hi_low_tones, extract_warble_tones
+from .audio_loader import load_audio
+from .frequency_extraction import FrequencyExtraction
+from .tone_detection import detect_quickcall, detect_long_tones, extract_warble_tones
 
 
 def main(audio_path, matching_threshold=2, time_resolution_ms=100):
