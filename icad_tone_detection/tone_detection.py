@@ -89,6 +89,7 @@ def detect_hi_low_tones(frequency_matches):
 
     return final_results
 
+
 # def extract_warble_tones(frequency_matches, interval_length, min_alternations):
 #     """
 #     Extract sequences of alternating tones (warble tones) from detected tones,
@@ -248,6 +249,7 @@ def within_tolerance(frequency1, frequency2, tolerance=0.02):
     if frequency1 is None or frequency2 is None:
         return False
     return abs(frequency1 - frequency2) / frequency1 <= tolerance
+
 
 def extract_warble_tones(frequency_matches, interval_length, min_alternations):
     """

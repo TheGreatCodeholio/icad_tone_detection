@@ -1,3 +1,3 @@
-from .main import main
+from .main import tone_detect
 
-__all__ = ['main']
+__all__ = ['tone_detect']
