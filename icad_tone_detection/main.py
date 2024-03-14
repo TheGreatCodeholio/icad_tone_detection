@@ -3,7 +3,8 @@ from .frequency_extraction import FrequencyExtraction
 from .tone_detection import detect_quickcall, detect_long_tones, extract_warble_tones
 
 
-def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low_interval=0.2, hi_low_min_alternations=2):
+def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low_interval=0.2,
+                hi_low_min_alternations=2):
     """
         Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
 
@@ -17,7 +18,7 @@ def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low
            - hi_low_min_alternations (int): The minimum number of alternations for a hi-low warble tone sequence to be considered valid. Default 2
 
         Returns:
-           - Tuple of (samples as np.array, frame rate, duration in seconds).
+           - list of dictionaries containing information about the found tones in the audio.
 
         Raises:
             -ValueError for unsupported audio input types or errors in processing.
@@ -25,7 +26,8 @@ def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low
 
     samples, frame_rate, duration_seconds = load_audio(audio_path)
 
-    matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold, time_resolution_ms).get_audio_frequencies()
+    matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold,
+                                              time_resolution_ms).get_audio_frequencies()
     two_tone_result = detect_quickcall(matched_frequencies)
     long_result = detect_long_tones(matched_frequencies, two_tone_result)
     hi_low_result = extract_warble_tones(matched_frequencies, hi_low_interval, hi_low_min_alternations)
