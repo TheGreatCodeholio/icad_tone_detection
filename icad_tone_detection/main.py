@@ -3,6 +3,13 @@ from .frequency_extraction import FrequencyExtraction
 from .tone_detection import detect_quickcall, detect_long_tones, extract_warble_tones
 
 
+class ToneDetectionResult:
+    def __init__(self, two_tone_result, long_result, hi_low_result):
+        self.two_tone_result = two_tone_result
+        self.long_result = long_result
+        self.hi_low_result = hi_low_result
+
+
 def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low_interval=0.2,
                 hi_low_min_alternations=2):
     """
@@ -31,4 +38,4 @@ def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low
     two_tone_result = detect_quickcall(matched_frequencies)
     long_result = detect_long_tones(matched_frequencies, two_tone_result)
     hi_low_result = extract_warble_tones(matched_frequencies, hi_low_interval, hi_low_min_alternations)
-    return two_tone_result, long_result, hi_low_result
+    return ToneDetectionResult(two_tone_result, long_result, hi_low_result)

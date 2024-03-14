@@ -9,8 +9,8 @@ else:
     print("Requires a audio path provided. Either file path, or URL.")
     exit(0)
 
-two_tone, long_tone, hl_tone = tone_detect(audio_path)
+detect_result = tone_detect(audio_path)
 
-data_dict = {"two_tone": two_tone, "long_tone": long_tone, "hl_tone": hl_tone}
+data_dict = {"two_tone": detect_result.two_tone_result, "long_tone": detect_result.long_result, "hl_tone": detect_result.hl_tone_result}
 
 print(json.dumps(data_dict))

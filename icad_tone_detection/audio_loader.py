@@ -1,7 +1,7 @@
 import numpy as np
 from pydub import AudioSegment
 import requests
-from io import BytesIO
+from io import BytesIO, IOBase
 
 
 def load_audio(audio_input):
@@ -25,8 +25,7 @@ def load_audio(audio_input):
             audio = get_audio_from_url(audio_input)
         else:
             audio = AudioSegment.from_file(audio_input)
-    elif isinstance(audio_input, BytesIO):
-        # Load audio from a BytesIO object
+    elif isinstance(audio_input, IOBase) or isinstance(audio_input, bytes) or isinstance(audio_input, bytearray):
         audio = AudioSegment.from_file(audio_input)
     else:
         raise ValueError("Unsupported audio input type. Must be a file path, URL, BytesIO object, or AudioSegment.")
