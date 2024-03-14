@@ -16,7 +16,7 @@ def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low
         Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
 
         Parameters:
-           - audio_input: Can be a string (path or URL), BytesIO object, or AudioSegment.
+           - audio_input: Can be a string (path or URL), bytes like object, or AudioSegment.
            - matching_threshold (float): The percentage threshold used to determine if two frequencies
                 are considered a match. For example, a threshold of 2 means that two frequencies are considered matching
                 if they are within 2% of each other.
@@ -25,7 +25,7 @@ def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, hi_low
            - hi_low_min_alternations (int): The minimum number of alternations for a hi-low warble tone sequence to be considered valid. Default 2
 
         Returns:
-           - list of dictionaries containing information about the found tones in the audio.
+           - An instance of ToneDetectionResult containing information about the found tones in the audio.
 
         Raises:
             -ValueError for unsupported audio input types or errors in processing.
