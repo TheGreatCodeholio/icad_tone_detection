@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import json
 import sys
 from icad_tone_detection import tone_detect
