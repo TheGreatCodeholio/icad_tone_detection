@@ -13,7 +13,7 @@ ffmpeg
 ```python
 from icad_tone_detection import tone_detect
 
-two_tone, long_tone, hl_tone = tone_detect('/path/to/file.mp3')
+detect_result = tone_detect('/path/to/file.mp3')
 
-print(f"Two Tone: {two_tone}\nLong Tone: {long_tone}\nHigh Low: {hl_tone}")
+print(f"Two Tone: {detect_result.two_tone_result}\nLong Tone: {detect_result.two_tone_result.long_tone_result}\nHigh Low: {detect_result.hi_low_result}")
 ```

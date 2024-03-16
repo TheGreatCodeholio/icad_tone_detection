@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='icad_tone_detection',
-    version='0.2',
+    version='0.3',
     packages=find_packages(),
     description='A Python library for extracting scanner radio tones from scanner audio.',
     author='TheGreatCodeholio',

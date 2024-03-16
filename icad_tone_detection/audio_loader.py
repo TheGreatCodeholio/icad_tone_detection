@@ -28,7 +28,7 @@ def load_audio(audio_input):
     elif isinstance(audio_input, IOBase) or isinstance(audio_input, bytes) or isinstance(audio_input, bytearray):
         audio = AudioSegment.from_file(audio_input)
     else:
-        raise ValueError("Unsupported audio input type. Must be a file path, URL, BytesIO object, or AudioSegment.")
+        raise ValueError("Unsupported audio input type. Must be a file path, URL, Bytes object, or Pydub AudioSegment.")
 
     # Processing
     try:

@@ -50,46 +50,6 @@ def detect_long_tones(frequency_matches, detected_quickcall):
     return long_tone_matches
 
 
-def detect_hi_low_tones(frequency_matches):
-    detected = True
-    tone_id = 0
-    final_results = []
-    result = []
-    if not frequency_matches:
-        return []
-    current_time = frequency_matches[0][0]
-    current_group = [(frequency_matches[0][0], frequency_matches[0][2])]
-    for i in range(1, len(frequency_matches)):
-        if frequency_matches[i][0] - current_time <= 0.35:
-            current_group.append((frequency_matches[i][0], frequency_matches[i][2]))
-            current_time = frequency_matches[i][0]
-        else:
-            result.append(current_group)
-            current_time = frequency_matches[i][0]
-            current_group = [(frequency_matches[i][0], frequency_matches[i][2])]
-    result.append(current_group)
-
-    tuples_to_check = []
-    for pd in result:
-        if len(pd) >= 6:
-            tuples_to_check.append(pd)
-
-    for ct in tuples_to_check:
-        for i in range(0, len(ct) - 2):
-            if ct[i][1][0] != ct[i + 2][1][0]:
-                detected = False
-
-        if detected:
-            # first = ct[0][1][0]
-            # second = ct[1][1][0]
-            tone_data = {"tone_id": f'hl_{tone_id + 1}', "actual": [ct[0][1][0], ct[1][1][0]],
-                         "occurred": round(ct[0][0], 2)}
-            tone_id += 1
-            final_results.append(tone_data)
-
-    return final_results
-
-
 # def extract_warble_tones(frequency_matches, interval_length, min_alternations):
 #     """
 #     Extract sequences of alternating tones (warble tones) from detected tones,
@@ -251,7 +211,7 @@ def within_tolerance(frequency1, frequency2, tolerance=0.02):
     return abs(frequency1 - frequency2) / frequency1 <= tolerance
 
 
-def extract_warble_tones(frequency_matches, interval_length, min_alternations):
+def detect_warble_tones(frequency_matches, interval_length, min_alternations):
     """
     Extract sequences of alternating warble tones from a list of frequency matches.
 
@@ -326,7 +286,7 @@ def extract_warble_tones(frequency_matches, interval_length, min_alternations):
         if len(current_sequence) >= min_alternations * 2:
             sequences.append({
                 "tone_id": f"hl_{id_index}",
-                "tones": [current_sequence[0][2][0], current_sequence[1][2][0]],
+                "detected": [current_sequence[0][2][0], current_sequence[1][2][0]],
                 "start": current_sequence[0][0],
                 "end": current_sequence[-1][1]
             })
