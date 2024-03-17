@@ -11,6 +11,9 @@ else:
 
 detect_result = tone_detect(audio_path)
 
-data_dict = {"two_tone": detect_result.two_tone_result, "long_tone": detect_result.long_result, "hl_tone": detect_result.hl_tone_result}
+if len(detect_result.two_tone_result) == 0 and len(detect_result.long_result) == 0 and len(detect_result.hi_low_result) == 0:
+    print("No tones")
+
+data_dict = {"two_tone": detect_result.two_tone_result, "long_tone": detect_result.long_result, "hl_tone": detect_result.hi_low_result}
 
 print(json.dumps(data_dict))
