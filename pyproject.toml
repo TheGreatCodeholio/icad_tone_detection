@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "icad_tone_detection"
+version = "0.4"
+authors = [
+  {name = "TheGreatCodeholio", email = "ian@icarey.net"},
+]
+description = "A Python library for extracting scanner radio tones from scanner audio."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy~=1.26.4",
+    "requests~=2.31.0",
+    "pydub~=0.25.1",
+    "scipy~=1.12.0",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/thegreatcodeholio/icad_tone_detection"
+Issues = "https://github.com/thegreatcodeholio/icad_tone_detection/issues"

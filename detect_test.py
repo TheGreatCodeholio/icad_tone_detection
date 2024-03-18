@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json
 import sys
-from icad_tone_detection import tone_detect
+from src.icad_tone_detection import tone_detect
 
 if len(sys.argv) > 1:
     audio_path = sys.argv[1]
