@@ -2,6 +2,8 @@ def detect_quickcall(frequency_matches):
     qc2_matches = []
     tone_id = 0
     last_set = None
+    if not frequency_matches or len(frequency_matches) < 1:
+        return qc2_matches
     for x in frequency_matches:
         if last_set is None and len(x[2]) >= 8 and 0 not in x[2] and 0.0 not in x[2]:
             last_set = x
@@ -24,8 +26,9 @@ def detect_long_tones(frequency_matches, detected_quickcall):
     long_tone_matches = []
     excluded_frequencies = set([])
 
-    if not frequency_matches:
+    if not frequency_matches or len(frequency_matches) < 1:
         return long_tone_matches
+
     last_set = frequency_matches[0]
     # add detected quick call tones to a list, so we can exclude them from long tone matches.
     for ttd in detected_quickcall:
@@ -226,8 +229,8 @@ def detect_warble_tones(frequency_matches, interval_length, min_alternations):
     sequences = []
     id_index = 1
 
-    if not frequency_matches:
-        raise ValueError("The frequency_matches list cannot be empty.")
+    if not frequency_matches or len(frequency_matches) < 1:
+        return sequences
 
     i = 0
     while i < len(frequency_matches):
