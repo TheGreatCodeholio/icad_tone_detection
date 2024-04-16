@@ -1,54 +1,86 @@
-def detect_quickcall(frequency_matches):
-    qc2_matches = []
+# def detect_quickcall(frequency_matches):
+#     qc2_matches = []
+#     tone_id = 0
+#     last_set = None
+#     if not frequency_matches or len(frequency_matches) < 1:
+#         return qc2_matches
+#     for x in frequency_matches:
+#         if last_set is None and len(x[2]) >= 8 and 0 not in x[2] and 0.0 not in x[2]:
+#             last_set = x
+#         else:
+#             if len(x[2]) >= 8 and 0 not in x[2] and 0.0 not in x[2]:
+#                 if len(last_set[2]) <= 12 and len(x[2]) >= 28:
+#                     tone_data = {"tone_id": f'qc_{tone_id + 1}', "detected": [last_set[2][0], x[2][0]],
+#                                  "start": last_set[0], "end": x[1]}
+#                     tone_id += 1
+#                     qc2_matches.append(tone_data)
+#                     last_set = x
+#                 else:
+#                     last_set = x
+#
+#     return qc2_matches
+
+
+def detect_two_tone(frequency_matches, min_tone_a_length=0.8, min_tone_b_length=2.8):
+    two_tone_matches = []
     tone_id = 0
     last_set = None
     if not frequency_matches or len(frequency_matches) < 1:
-        return qc2_matches
-    for x in frequency_matches:
-        if last_set is None and len(x[2]) >= 8 and 0 not in x[2] and 0.0 not in x[2]:
-            last_set = x
-        else:
-            if len(x[2]) >= 8 and 0 not in x[2] and 0.0 not in x[2]:
-                if len(last_set[2]) <= 12 and len(x[2]) >= 28:
-                    tone_data = {"tone_id": f'qc_{tone_id + 1}', "detected": [last_set[2][0], x[2][0]],
-                                 "start": last_set[0], "end": x[1]}
+        return two_tone_matches
+
+    for current_set in frequency_matches:
+        if all(f > 0 for f in current_set[2]):  # Ensure frequencies are non-zero
+            current_duration = current_set[1] - current_set[0]  # Calculate the duration of the current tone
+
+            if last_set is None:
+                last_set = current_set
+            else:
+                last_duration = last_set[1] - last_set[0]  # Calculate the duration of the last tone
+                # Check if the last tone is a valid A tone and the current is a valid B tone
+                if last_duration >= min_tone_a_length and current_duration >= min_tone_b_length:
+                    tone_data = {
+                        "tone_id": f'qc_{tone_id + 1}',
+                        "detected": [last_set[2][0], current_set[2][0]],  # Frequency values of A and B tones
+                        "start": last_set[0],  # Start time of tone A
+                        "end": current_set[1]  # End time of tone B
+                    }
                     tone_id += 1
-                    qc2_matches.append(tone_data)
-                    last_set = x
-                else:
-                    last_set = x
+                    two_tone_matches.append(tone_data)
+                # Update last_set to current_set for next iteration
+                last_set = current_set
 
-    return qc2_matches
+    return two_tone_matches
 
 
-def detect_long_tones(frequency_matches, detected_quickcall):
-    tone_id = 0
+def detect_long_tones(frequency_matches, detected_quickcall, min_duration=2.0):
     long_tone_matches = []
-    excluded_frequencies = set([])
+    excluded_frequencies = set([0.0])  # Initializing with 0.0 Hz to exclude it
 
-    if not frequency_matches or len(frequency_matches) < 1:
-        return long_tone_matches
+    # Add detected quick call tones to the excluded list
+    for quickcall in detected_quickcall:
+        excluded_frequencies.update(quickcall["detected"][:2])
 
-    last_set = frequency_matches[0]
-    # add detected quick call tones to a list, so we can exclude them from long tone matches.
-    for ttd in detected_quickcall:
-        excluded_frequencies.update(ttd["detected"][:2])
+    for start, end, frequencies in frequency_matches:
+        duration = end - start
+        if not frequencies:
+            continue
 
-    for x in frequency_matches:
-        if len(x[2]) >= 10:
-            if 12 >= len(last_set) >= 8 and len(x[2]) >= 20:
-                last_set = x[2]
-            elif len(x[2]) >= 15:
-                if x[2][0] == 0 or x[2][0] == 0.0:
-                    continue
-                if x[2][0] in excluded_frequencies:
-                    continue
+        current_frequency = frequencies[0]
 
-                if x[2][0] > 250:
-                    tone_data = {"tone_id": f'lt_{tone_id + 1}', "detected": x[2][0], "start": round(x[0], 3),
-                                 "end": round(x[1], 3)}
-                    tone_id += 1
-                    long_tone_matches.append(tone_data)
+        # Skip the loop iteration if the current frequency is in the excluded frequencies
+        if current_frequency in excluded_frequencies or current_frequency <= 500:
+            continue
+
+        # Check if the duration meets the minimum requirement
+        if duration >= min_duration:
+            tone_data = {
+                "tone_id": f"lt_{len(long_tone_matches) + 1}",
+                "detected": current_frequency,
+                "start": start,
+                "end": end,
+                "length": duration
+            }
+            long_tone_matches.append(tone_data)
 
     return long_tone_matches
 
