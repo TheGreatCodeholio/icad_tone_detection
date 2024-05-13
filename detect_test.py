@@ -9,7 +9,7 @@ else:
     print("Requires a audio path provided. Either file path, or URL.")
     exit(0)
 
-detect_result = tone_detect(audio_path, time_resolution_ms=50, debug=True)
+detect_result = tone_detect(audio_path, matching_threshold=1.5, time_resolution_ms=50, debug=True)
 
 if len(detect_result.two_tone_result) == 0 and len(detect_result.long_result) == 0 and len(detect_result.hi_low_result) == 0:
     print("No tones")

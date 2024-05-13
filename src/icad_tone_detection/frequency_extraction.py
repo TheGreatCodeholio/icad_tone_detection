@@ -43,14 +43,13 @@ class FrequencyExtraction:
         """
         try:
             window = 'hann'
-            n_fft = 2048  # Number of FFT points
+            n_fft = 2048  # Number of FFT points, smaller values may be considered if finer time resolution is needed
 
             # Calculate hop_length based on the desired time resolution
-            hop_length = int(self.frame_rate * self.time_resolution_ms / 1000)
+            hop_length = max(1, int(self.frame_rate * self.time_resolution_ms / 1000))
 
             # Perform the STFT
-            frequencies, _, zxx = stft(self.samples, self.frame_rate, window=window, nperseg=n_fft,
-                                       noverlap=n_fft - hop_length)
+            frequencies, time_samples, zxx = stft(self.samples, self.frame_rate, window=window, nperseg=n_fft, noverlap=n_fft - hop_length)
             amplitude = np.abs(zxx)  # Get the magnitude of the STFT coefficients
 
             # Convert amplitude to decibels
@@ -59,13 +58,28 @@ class FrequencyExtraction:
             # Detect the frequency with the highest amplitude at each time step
             detected_frequencies = frequencies[np.argmax(amplitude_db, axis=0)]
 
-            matching_frequencies = self.match_frequencies(detected_frequencies.tolist())
+            matching_frequencies = self.match_frequencies(detected_frequencies.tolist(), time_samples)
 
             return matching_frequencies
 
         except Exception as e:
             print(f"Error extracting frequencies: {e}")
             return None
+
+    def dynamic_threshold(self, frequencies, index):
+        """
+        Calculates a dynamic threshold based on the frequency changes.
+        """
+        base_frequency = frequencies[max(0, index - 1)]
+        return base_frequency * self.matching_threshold / 100
+
+    def calculate_times(self, start_index, end_index, time_samples):
+        """
+        Calculates accurate start and end times for frequency matches.
+        """
+        start_time = round(time_samples[start_index], 3)
+        end_time = round(time_samples[end_index - 1], 3)
+        return start_time, end_time
 
     @staticmethod
     def amplitude_to_decibels(amplitude, reference_value):
@@ -83,17 +97,19 @@ class FrequencyExtraction:
         reference_value = np.maximum(reference_value, 1e-20)
         return 20 * np.log10(np.maximum(amplitude, 1e-20) / reference_value)
 
-    def match_frequencies(self, detected_frequencies):
+    def match_frequencies(self, detected_frequencies, time_samples):
         """
-        Identifies and groups matching frequencies from a list of detected frequencies based on the matching threshold.
-        Each group's start time, end time, and the matching frequencies are returned.
+            Identifies and groups matching frequencies from a list of detected frequencies based on the matching threshold.
+            Each group's start time, end time, and the matching frequencies are returned.
 
-        Parameters:
-            detected_frequencies (list of float): The detected frequencies from the audio sample.
+            Parameters:
+                detected_frequencies (list of float): The detected frequencies from the audio sample.
+                time_samples (np.array): Array of times corresponding to each frequency sample.
 
-        Returns:
-            list of tuples: Each tuple contains the start time, end time, and a list of matching frequencies.
+            Returns:
+                list of tuples: Each tuple contains the start time, end time, and a list of matching frequencies.
         """
+
         if not detected_frequencies:
             return []
 
@@ -101,27 +117,24 @@ class FrequencyExtraction:
             frequencies = [round(f, 1) for f in detected_frequencies]
             matching_frequencies = []
             current_match = [frequencies[0]]
-            start_index = 0  # Initialize start index for the first frequency
+            start_index = 0
 
             for i in range(1, len(frequencies)):
-                threshold = frequencies[i - 1] * self.matching_threshold / 100
+                threshold = self.dynamic_threshold(frequencies, i)
                 if abs(frequencies[i] - frequencies[i - 1]) <= threshold:
                     current_match.append(frequencies[i])
                 else:
                     if len(current_match) >= 2:
-                        # Calculate start and end times for the current match
-                        start_time = round(start_index * self.duration_seconds / len(frequencies), 3)
-                        end_time = round(i * self.duration_seconds / len(frequencies), 3)
-                        matching_frequencies.append((start_time, end_time, current_match))
+                        start_time, end_time = self.calculate_times(start_index, i, time_samples)
+                        freq_length = round((end_time - start_time) + .1, 2)
+                        matching_frequencies.append((start_time, end_time, freq_length, current_match))
                     current_match = [frequencies[i]]
-                    start_index = i  # Update start index for the new match
+                    start_index = i
 
-            # Handle the last group of matching frequencies
             if len(current_match) >= 2:
-                start_time = round(start_index * self.duration_seconds / len(frequencies), 3)
-                end_time = round(len(frequencies) * self.duration_seconds / len(
-                    frequencies), 3)  # End time for the last frequency
-                matching_frequencies.append((start_time, end_time, current_match))
+                start_time, end_time = self.calculate_times(start_index, len(frequencies), time_samples)
+                freq_length = round((end_time - start_time) + .1, 2)
+                matching_frequencies.append((start_time, end_time, freq_length, current_match))
 
             return matching_frequencies
         except Exception as e:
