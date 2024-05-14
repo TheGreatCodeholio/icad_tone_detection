@@ -32,6 +32,12 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Upload built packages to artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: dist
+          path: dist/
+        
       - name: Publish package
         if: github.ref == 'refs/heads/main' && matrix.python-version == '3.10'
         env:
