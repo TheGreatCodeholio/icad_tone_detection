@@ -95,72 +95,60 @@ def detect_warble_tones(frequency_matches, interval_length, min_alternations):
     sequences = []
     id_index = 1
 
-    if not frequency_matches or len(frequency_matches) < 1:
-        return sequences
-
     i = 0
     while i < len(frequency_matches):
         current_sequence = []
+        current_tones = []
 
         while i < len(frequency_matches):
             group = frequency_matches[i]
-            # Ensure there are frequencies to evaluate
-            if not group[3]:
+            if not group[3] or group[3][0] <= 0 or len(group[3]) < 2:
                 i += 1
-                break
+                continue
 
             freq = group[3][0]
 
-            # Skip groups with invalid frequencies or not enough tones
-            if freq <= 0 or len(group[3]) < 2:
-                i += 1
-                break
-
             if not current_sequence:
+                # Start a new sequence with the current group
                 current_sequence.append(group)
+                current_tones.append(freq)
             else:
-                group_a = current_sequence[-1]
-                tone_a = group_a[3][0]
+                last_group = current_sequence[-1]
+                last_freq = last_group[3][0]
 
-                tone_b = freq
-
-                # Check for the next group, if it exists
-                if i + 1 < len(frequency_matches):
-                    group_c = frequency_matches[i + 1]
-                    tone_c = group_c[3][0]
-
-                    # Ensure current tone does not match the adjacent tones directly
-                    if tone_a == tone_b or tone_b == tone_c:
-                        i += 1
-                        break
-
-                    # Check for alternation with a tolerance
-                    if len(current_sequence) >= 2:
-                        previous_alt_tone = current_sequence[-2][3][0]
-                        if within_tolerance(tone_b, previous_alt_tone) and group[0] - group_a[1] < interval_length:
-                            current_sequence.append(group)
-                        else:
-                            i += 1
-                            break
-                    else:
+                # Check that the new frequency alternates with the previous one
+                # and it's within the time interval limit
+                if freq != last_freq and group[0] - last_group[1] <= interval_length:
+                    if len(current_tones) < 2:
+                        # If we have less than 2 tones, add the new tone
+                        current_tones.append(freq)
+                    if freq in current_tones:
+                        # Add to sequence if it continues the alternation pattern
                         current_sequence.append(group)
+                    else:
+                        # Break the sequence if a new, third tone is introduced
+                        break
                 else:
-                    # Handle the last group
-                    current_sequence.append(group)
+                    # Break the sequence if the same frequency repeats or interval exceeded
                     break
 
             i += 1
 
-        # Validate and append the sequence if it meets the criteria
-        if len(current_sequence) >= min_alternations * 2:
-            sequences.append({
-                "tone_id": f"hl_{id_index}",
-                "detected": [current_sequence[0][3][0], current_sequence[1][3][0]],
-                "start": current_sequence[0][0],
-                "end": current_sequence[-1][1],
-                "length": round(current_sequence[-1][1] - current_sequence[0][0], 2),
-                "alternations": len(current_sequence) // 2
-            })
-            id_index += 1
+        # Check if the current sequence is valid before proceeding
+        if len(current_sequence) >= min_alternations:
+            if len(current_tones) == 2:  # Ensure exactly two tones are alternating
+                sequences.append({
+                    "tone_id": f"hl_{id_index}",
+                    "detected": list(current_tones),
+                    "start": current_sequence[0][0],
+                    "end": current_sequence[-1][1],
+                    "length": round(current_sequence[-1][1] - current_sequence[0][0], 2),
+                    "alternations": len(current_sequence)
+                })
+                id_index += 1
+
+        # Move to the next possible sequence start
+        if i < len(frequency_matches) and not current_sequence:
+            i += 1  # Increment only if no sequence was started to avoid getting stuck
 
     return sequences

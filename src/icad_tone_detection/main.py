@@ -11,7 +11,7 @@ class ToneDetectionResult:
 
 
 def tone_detect(audio_path, matching_threshold=2, time_resolution_ms=100, tone_a_min_length=0.8, tone_b_min_length=2.8, hi_low_interval=0.2,
-                hi_low_min_alternations=3, long_tone_min_length=2.0, debug=False):
+                hi_low_min_alternations=4, long_tone_min_length=2.0, debug=False):
     """
         Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
 
