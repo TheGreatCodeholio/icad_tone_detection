@@ -78,7 +78,7 @@ class FrequencyExtraction:
         Calculates accurate start and end times for frequency matches.
         """
         start_time = round(time_samples[start_index], 3)
-        end_time = round(time_samples[end_index - 1], 3)
+        end_time = round(time_samples[end_index], 3)  # Use end_index directly
         return start_time, end_time
 
     @staticmethod
@@ -99,15 +99,15 @@ class FrequencyExtraction:
 
     def match_frequencies(self, detected_frequencies, time_samples):
         """
-            Identifies and groups matching frequencies from a list of detected frequencies based on the matching threshold.
-            Each group's start time, end time, and the matching frequencies are returned.
+        Identifies and groups matching frequencies from a list of detected frequencies based on the matching threshold.
+        Each group's start time, end time, and the matching frequencies are returned.
 
-            Parameters:
-                detected_frequencies (list of float): The detected frequencies from the audio sample.
-                time_samples (np.array): Array of times corresponding to each frequency sample.
+        Parameters:
+            detected_frequencies (list of float): The detected frequencies from the audio sample.
+            time_samples (np.array): Array of times corresponding to each frequency sample.
 
-            Returns:
-                list of tuples: Each tuple contains the start time, end time, and a list of matching frequencies.
+        Returns:
+            list of tuples: Each tuple contains the start time, end time, and a list of matching frequencies.
         """
 
         if not detected_frequencies:
@@ -125,15 +125,15 @@ class FrequencyExtraction:
                     current_match.append(frequencies[i])
                 else:
                     if len(current_match) >= 2:
-                        start_time, end_time = self.calculate_times(start_index, i, time_samples)
-                        freq_length = round((end_time - start_time) + .1, 2)
+                        start_time, end_time = self.calculate_times(start_index, i - 1, time_samples)
+                        freq_length = round(end_time - start_time, 3)
                         matching_frequencies.append((start_time, end_time, freq_length, current_match))
                     current_match = [frequencies[i]]
                     start_index = i
 
             if len(current_match) >= 2:
-                start_time, end_time = self.calculate_times(start_index, len(frequencies), time_samples)
-                freq_length = round((end_time - start_time) + .1, 2)
+                start_time, end_time = self.calculate_times(start_index, len(frequencies) - 1, time_samples)
+                freq_length = round(end_time - start_time, 3)
                 matching_frequencies.append((start_time, end_time, freq_length, current_match))
 
             return matching_frequencies

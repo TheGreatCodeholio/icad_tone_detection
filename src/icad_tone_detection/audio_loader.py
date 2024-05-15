@@ -38,7 +38,8 @@ def load_audio(audio_input):
         audio = audio.set_channels(1)  # Ensure the audio is mono
         audio = audio.set_frame_rate(22050)  # Set the frame rate to 22050 Hz
         samples = np.array(audio.get_array_of_samples()).astype(np.float32)
-        samples /= np.iinfo(audio.sample_width * 8).max  # Adjusted for correct normalization
+        max_val = float(2 ** (audio.sample_width * 8 - 1))
+        samples /= max_val
     except Exception as e:
         raise RuntimeError(f"Error processing audio: {e}")
 
