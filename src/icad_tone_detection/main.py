@@ -40,7 +40,18 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_
     matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold,
                                               time_resolution_ms).get_audio_frequencies()
     if debug is True:
-        print("Matched frequencies: ", matched_frequencies)
+        debug_info = (
+            f"Analyzing {audio_path} with the following settings:\n"
+            f"Matching Threshold: {matching_threshold}%\n"
+            f"Time Resolution: {time_resolution_ms}ms\n"
+            f"Tone A Min Length: {tone_a_min_length}s\n"
+            f"Tone B Min Length: {tone_b_min_length}s\n"
+            f"Long Tone Min Length: {long_tone_min_length}s\n"
+            f"Hi-Low Interval: {hi_low_interval}s\n"
+            f"Hi-Low Min Alternations: {hi_low_min_alternations}\n"
+            f"Matched frequencies: {matched_frequencies}"
+        )
+        print(debug_info)
 
     two_tone_result = detect_two_tone(matched_frequencies, tone_a_min_length, tone_b_min_length)
     long_result = detect_long_tones(matched_frequencies, two_tone_result, long_tone_min_length)
