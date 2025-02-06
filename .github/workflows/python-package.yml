@@ -9,26 +9,43 @@ jobs:
   # 1) Build wheels for each (platform, python-version)
   # ------------------------------------------------------------------
   build:
+    # We'll do 5 OS/arch combos multiplied by 3 Python versions => 15 jobs
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: [ "3.10", "3.11", "3.12" ]
+        # OS version/arch to build on
+        os: ["ubuntu-latest","ubuntu-22.04-arm","windows-latest","macos-13","macos-latest"]
+        # The Python versions we want to build for:
+        python-version: ["3.10", "3.11", "3.12"]
+        # For each of these, we "include" an OS+arch combination,
+        # with the correct runner label from the current GitHub docs:
         include:
           - os: ubuntu-latest
             platform: linux_x86_64
-          - os: ubuntu-latest
+
+          # For Linux arm64, use the public preview label:
+          - os: ubuntu-22.04-arm
             platform: linux_arm64
+
           - os: windows-latest
             platform: windows_x86_64
-          - os: macos-latest
+
+          # macOS x86_64 (Intel):
+          - os: macos-13
             platform: macos_x86_64
+
+          # macOS arm64 (M1):
           - os: macos-latest
             platform: macos_arm64
+
+    # The job will run on whichever OS label is in matrix.os
     runs-on: ${{ matrix.os }}
+
+    # We want to publish to PyPI via OpenID Connect, so we set permission:
     permissions:
       id-token: write
 
+    # We will capture the package version from one of the steps and pass it to the 'release' job
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -45,13 +62,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install build toml
 
+      # Extract the version from pyproject.toml
       - name: Extract version
         id: get_version
+        shell: bash  # needed for `VERSION=$(...)` to work on Windows, too
         run: |
           VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Prune extra binaries (bash on all platforms)
+      - name: Prune extra binaries
+        shell: bash
         run: |
           if [[ "${{ matrix.platform }}" == linux_* ]]; then
             rm -rf src/icad_tone_detection/bin/macos_* src/icad_tone_detection/bin/windows_* || true
@@ -72,11 +92,11 @@ jobs:
           fi
           # Make sure non-Windows binaries are executable
           find src/icad_tone_detection/bin -type f ! -name '*.exe' -exec chmod +x {} \; 2>/dev/null || true
-        shell: bash  # Ensure we use bash on Windows, too
 
       - name: Build distributions (wheel + sdist)
         run: python -m build
 
+      # Upload artifacts so the 'release' job can download them
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -84,19 +104,22 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+      # Optionally publish to test.pypi.org if platform == linux_x86_64
       - name: Publish package via Trusted Publisher
         if: ${{ github.ref == 'refs/heads/main' && matrix.platform == 'linux_x86_64' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
           repository-url: 'https://test.pypi.org/legacy/'
-          # or the real PyPI: 'https://upload.pypi.org/legacy/'
+          # Or set to real PyPI: 'https://upload.pypi.org/legacy/'
 
   # ------------------------------------------------------------------
   # 2) Create a separate GitHub Release per OS/arch
   # ------------------------------------------------------------------
   release:
     needs: build
+    # We'll do five sub-jobs, one per platform.
+    # Each sub-job will download all 3 artifacts for that platform (for 3 Python versions).
     strategy:
       fail-fast: false
       matrix:
@@ -104,11 +127,11 @@ jobs:
           - platform: linux_x86_64
             os: ubuntu-latest
           - platform: linux_arm64
-            os: ubuntu-latest
+            os: ubuntu-22.04-arm
           - platform: windows_x86_64
             os: windows-latest
           - platform: macos_x86_64
-            os: macos-latest
+            os: macos-13
           - platform: macos_arm64
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -132,7 +155,6 @@ jobs:
         with:
           name: dist-${{ matrix.platform }}-py3.11
           path: dist
-
 
       - name: Download artifacts (Py3.12)
         uses: actions/download-artifact@v4
