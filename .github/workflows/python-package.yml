@@ -92,10 +92,12 @@ jobs:
           path: dist/*
 
       - name: Publish package via Trusted Publisher
-        if: ${{ github.ref == 'refs/heads/main' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' || matrix.python-version == '3.12') }}
+        if: ${{ github.ref == 'refs/heads/main' && runner.os == 'Linux' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' ||  matrix.python-version == '3.12') }}
+
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          environment: pypi
+          skip-existing: true
+          repository-url: 'https://test.pypi.org/legacy/'
 
   # ------------------------------------------------------------------
   # 2) Create a separate GitHub Release per OS/arch
