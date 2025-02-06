@@ -9,7 +9,6 @@ jobs:
   # 1) Build wheels for each (platform, python-version)
   # ------------------------------------------------------------------
   build:
-    # Instead of pick_runner, we define a matrix with both 'platform' and 'os'
     strategy:
       fail-fast: false
       matrix:
@@ -25,18 +24,13 @@ jobs:
             os: macos-latest
           - platform: macos_arm64
             os: macos-latest
-
-        # Now also vary the python version
         python-version: ["3.10", "3.11", "3.12"]
 
-      # That yields 15 builds (5 platforms × 3 py versions)
-
-    # This sets the runner from the matrix 'os' key
     runs-on: ${{ matrix.os }}
-
     permissions:
       id-token: write
 
+    # Expose the version so the 'release' job can reference it as: needs.build.outputs.version
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -54,14 +48,13 @@ jobs:
           pip install build toml
 
       - name: Extract version
+        id: get_version          # <--- Important to reference it
         run: |
           VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Prune extra binaries
         run: |
-          # Remove bin folders that don't match `matrix.platform`
-          # e.g. if platform=linux_x86_64, remove windows_* / macos_* / linux_arm64, etc.
           if [[ "${{ matrix.platform }}" == linux_* ]]; then
             rm -rf src/icad_tone_detection/bin/macos_* src/icad_tone_detection/bin/windows_* || true
             if [[ "${{ matrix.platform }}" == "linux_x86_64" ]]; then
@@ -79,11 +72,13 @@ jobs:
               rm -rf src/icad_tone_detection/bin/macos_x86_64 || true
             fi
           fi
+          # Make sure non-Windows binaries are executable
           find src/icad_tone_detection/bin -type f ! -name '*.exe' -exec chmod +x {} \; 2>/dev/null || true
 
       - name: Build distributions (wheel + sdist)
         run: python -m build
 
+      # <-- Upload artifact BEFORE trying to publish, so we don't lose them if publish fails
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -91,20 +86,18 @@ jobs:
           path: dist/*
 
       - name: Publish package via Trusted Publisher
-        if: ${{ github.ref == 'refs/heads/main' && runner.os == 'Linux' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' ||  matrix.python-version == '3.12') }}
-
+        if: ${{ github.ref == 'refs/heads/main' && runner.os == 'Linux' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' || matrix.python-version == '3.12') }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
           repository-url: 'https://test.pypi.org/legacy/'
+          # or the real PyPI: 'https://upload.pypi.org/legacy/'
 
   # ------------------------------------------------------------------
   # 2) Create a separate GitHub Release per OS/arch
   # ------------------------------------------------------------------
   release:
     needs: build
-
-    # Same approach: define 'platform' + 'os' in the matrix
     strategy:
       fail-fast: false
       matrix:
@@ -119,14 +112,13 @@ jobs:
             os: macos-latest
           - platform: macos_arm64
             os: macos-latest
-
     runs-on: ${{ matrix.os }}
-
     if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v3
 
+      # Put the version into an env var so we can reference in 'tag_name'
       - name: Export version from build job
         run: echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
 
