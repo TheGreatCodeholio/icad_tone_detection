@@ -12,25 +12,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        python-version: [ "3.10", "3.11", "3.12" ]
         include:
-          # 5 platforms with a mapped 'os':
-          - platform: linux_x86_64
-            os: ubuntu-latest
-          - platform: linux_arm64
-            os: ubuntu-latest
-          - platform: windows_x86_64
-            os: windows-latest
-          - platform: macos_x86_64
-            os: macos-latest
-          - platform: macos_arm64
-            os: macos-latest
-        python-version: ["3.10", "3.11", "3.12"]
-
+          - os: ubuntu-latest
+            platform: linux_x86_64
+          - os: ubuntu-latest
+            platform: linux_arm64
+          - os: windows-latest
+            platform: windows_x86_64
+          - os: macos-latest
+            platform: macos_x86_64
+          - os: macos-latest
+            platform: macos_arm64
     runs-on: ${{ matrix.os }}
     permissions:
       id-token: write
 
-    # Expose the version so the 'release' job can reference it as: needs.build.outputs.version
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -48,12 +45,12 @@ jobs:
           pip install build toml
 
       - name: Extract version
-        id: get_version          # <--- Important to reference it
+        id: get_version
         run: |
           VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Prune extra binaries
+      - name: Prune extra binaries (bash on all platforms)
         run: |
           if [[ "${{ matrix.platform }}" == linux_* ]]; then
             rm -rf src/icad_tone_detection/bin/macos_* src/icad_tone_detection/bin/windows_* || true
@@ -74,19 +71,20 @@ jobs:
           fi
           # Make sure non-Windows binaries are executable
           find src/icad_tone_detection/bin -type f ! -name '*.exe' -exec chmod +x {} \; 2>/dev/null || true
+        shell: bash  # Ensure we use bash on Windows, too
 
       - name: Build distributions (wheel + sdist)
         run: python -m build
 
-      # <-- Upload artifact BEFORE trying to publish, so we don't lose them if publish fails
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}-py${{ matrix.python-version }}
           path: dist/*
+          if-no-files-found: error
 
       - name: Publish package via Trusted Publisher
-        if: ${{ github.ref == 'refs/heads/main' && runner.os == 'Linux' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' || matrix.python-version == '3.12') }}
+        if: ${{ github.ref == 'refs/heads/main' && matrix.platform == 'linux_x86_64' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
@@ -118,15 +116,27 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Put the version into an env var so we can reference in 'tag_name'
       - name: Export version from build job
         run: echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
 
-      - name: Download artifacts
+      # Download all 3 python-version artifacts for this platform:
+      - name: Download artifacts (Py3.10)
         uses: actions/download-artifact@v4
         with:
-          # Grab all python versions for this platform
-          name: dist-${{ matrix.platform }}-py**
+          name: dist-${{ matrix.platform }}-py3.10
+          path: dist
+
+      - name: Download artifacts (Py3.11)
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}-py3.11
+          path: dist
+
+
+      - name: Download artifacts (Py3.12)
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}-py3.12
           path: dist
 
       - name: Create GitHub Release
