@@ -1,3 +1,10 @@
+import json
+import shutil
+import subprocess
+
+from pydub import AudioSegment
+
+
 def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=2.7):
     two_tone_matches = []
     tone_id = 0
@@ -152,3 +159,173 @@ def detect_warble_tones(frequency_matches, interval_length, min_alternations):
             i += 1  # Increment only if no sequence was started to avoid getting stuck
 
     return sequences
+
+def detect_mdc_tones(
+        segment: AudioSegment,
+        binary_path: str = "icad_decode",
+        highpass_freq: int = 200,
+        lowpass_freq: int = 4000,
+        require_unsigned_8bit: bool = True
+) -> list[str]:
+    """
+    Decode MDC1200 (or Fleetsync) frames from a PyDub AudioSegment by piping raw audio to an external 'icad_decode' binary.
+
+    :param segment:             A PyDub AudioSegment containing audio to decode.
+    :param binary_path:          Path to the 'icad_decode' executable (default: 'icad_decode').
+    :param highpass_freq:       Frequency in Hz for highpass filter (default: 200).
+    :param lowpass_freq:        Frequency in Hz for lowpass filter (default: 4000).
+    :param require_unsigned_8bit:
+                                Whether to shift samples from signed 8-bit (PyDub default) to unsigned 8-bit.
+                                If True, each sample is shifted by +128. If your icad_decode can handle signed 8-bit,
+                                set this to False. (default: True)
+
+    :return: mdc_matches list of dicts each dict representing a detected sequence of MDC1200 (or Fleetsync) frames.
+
+    :raises FileNotFoundError:  If binary_path is not found on the system.
+    :raises ValueError:         If the audio segment is empty or too short to process.
+    :raises RuntimeError:       If 'icad_decode' fails to run properly or returns a nonzero exit code.
+    """
+
+    mdc_matches = []
+
+
+    # Check if the AudioSegment is non-empty
+    if len(segment) == 0:
+        raise ValueError("The provided AudioSegment is empty (0 ms). Nothing to decode.")
+
+    # ----------------------------------------------------------------
+    # 1) Resample, convert to mono, apply filters
+    # ----------------------------------------------------------------
+    # Convert to 22050 Hz, mono, 16-bit (PyDub uses signed 8-bit by default)
+    segment = segment.set_frame_rate(22050)
+    segment = segment.set_channels(1)
+    segment = segment.set_sample_width(2)  # 16-bit, *signed* in PyDub
+
+    # Apply high-pass and low-pass filters in PyDub
+    # (Not identical to SoX, but usually good enough for typical use)
+    if highpass_freq > 0:
+        segment = segment.high_pass_filter(highpass_freq)
+    if lowpass_freq > 0:
+        segment = segment.low_pass_filter(lowpass_freq)
+
+    # ----------------------------------------------------------------
+    # 2) Convert from signed 8-bit -> unsigned 8-bit if needed
+    # ----------------------------------------------------------------
+    # If your decoder expects samples in the range 0..255 (unsigned), we must shift
+    # the PyDub data (which is -128..+127 for 8-bit signed).
+    raw_data = segment.raw_data
+    if require_unsigned_8bit:
+        raw_data = bytes((s + 128) & 0xFF for s in raw_data)
+
+    # ----------------------------------------------------------------
+    # 3) Pipe the raw audio bytes into 'icad_decode' via subprocess
+    # ----------------------------------------------------------------
+    cmd = [binary_path, "-m", "mdc", "-"]  # '-' indicates reading from STDIN
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+    except OSError as e:
+        # Catch other OS-level errors (permissions, etc.)
+        raise RuntimeError(f"Failed to execute '{binary_path}': {e}") from e
+
+    # Send raw audio to icad_decode
+    out, err = proc.communicate(input=raw_data)
+
+    # Check return code
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"'icad_decode' process exited with code {proc.returncode}.\n"
+            f"stderr:\n{err.decode('utf-8', errors='replace')}"
+        )
+
+    # ----------------------------------------------------------------
+    # 4) Process the icad_decode output
+    # ----------------------------------------------------------------
+    binary_stdout = out.decode("utf-8", errors="replace")
+    lines = binary_stdout.strip().splitlines()
+
+    for line in lines:
+        try:
+            obj = json.loads(line)
+            mdc_matches.append(obj)
+        except json.JSONDecodeError:
+            pass
+
+    return mdc_matches
+
+def detect_dtmf_tones(
+        segment: AudioSegment,
+        binary_path: str = "icad_decode"
+) -> list[str]:
+    """
+    Decode dtmf tones from a PyDub AudioSegment by piping raw audio to an external 'decode' binary.
+
+    :param segment:             A PyDub AudioSegment containing audio to decode.
+    :param binary_path:          Path to the 'icad_decode' executable (default: 'icad_decode').
+
+    :return: dtmf_matches list of dicts each dict representing a detected dtmf key press.
+
+    :raises FileNotFoundError:  If binary_path is not found on the system.
+    :raises ValueError:         If the audio segment is empty or too short to process.
+    :raises RuntimeError:       If 'icad_decode' fails to run properly or returns a nonzero exit code.
+    """
+
+    dtmf_matches = []
+
+    # Check if the AudioSegment is non-empty
+    if len(segment) == 0:
+        raise ValueError("The provided AudioSegment is empty (0 ms). Nothing to decode.")
+
+    # ----------------------------------------------------------------
+    # 1) Resample, convert to mono, apply filters
+    # ----------------------------------------------------------------
+    # Convert to 22050 Hz, mono, 16-bit
+    segment = segment.set_frame_rate(22050) # 22050 frame rate
+    segment = segment.set_channels(1) # Mono
+    segment = segment.set_sample_width(2)  # 16-bit, *signed* in PyDub
+
+    raw_data = segment.raw_data
+
+    # ----------------------------------------------------------------
+    # 2) Pipe the raw audio bytes into 'icad_decode' via subprocess
+    # ----------------------------------------------------------------
+    cmd = [binary_path, "-m", "dtmf", "-"]  # '-' indicates reading from STDIN
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+    except OSError as e:
+        # Catch other OS-level errors (permissions, etc.)
+        raise RuntimeError(f"Failed to execute '{binary_path}': {e}") from e
+
+    # Send raw audio to icad_decode
+    out, err = proc.communicate(input=raw_data)
+
+    # Check return code
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"'icad_decode' process exited with code {proc.returncode}.\n"
+            f"stderr:\n{err.decode('utf-8', errors='replace')}"
+        )
+
+    # ----------------------------------------------------------------
+    # 3) Process the icad_decode output
+    # ----------------------------------------------------------------
+    binary_stdout = out.decode("utf-8", errors="replace")
+    lines = binary_stdout.strip().splitlines()
+
+    for line in lines:
+        try:
+            obj = json.loads(line)
+            dtmf_matches.append(obj)
+        except json.JSONDecodeError:
+            pass
+
+    return dtmf_matches

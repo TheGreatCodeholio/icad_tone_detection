@@ -12,7 +12,7 @@ def load_audio(audio_input):
         - audio_input: Can be a string (path or URL), BytesIO object, or AudioSegment.
 
         Returns:
-        - Tuple of (samples as np.array, frame rate, duration in seconds).
+        - Tuple of (audio_segment, samples as np.array, frame rate, duration in seconds).
 
         Raises:
         - ValueError for unsupported audio input types or errors in processing.
@@ -43,7 +43,7 @@ def load_audio(audio_input):
     except Exception as e:
         raise RuntimeError(f"Error processing audio: {e}")
 
-    return samples, audio.frame_rate, audio.duration_seconds
+    return audio, samples, audio.frame_rate, audio.duration_seconds
 
 
 def get_audio_from_url(url):

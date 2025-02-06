@@ -6,7 +6,7 @@ from icad_tone_detection import tone_detect
 
 def main():
     parser = argparse.ArgumentParser(description='Run tone detection on an audio file.')
-    parser.add_argument('audio_path', type=str, help='Path to the audio file')
+    parser.add_argument('-p', '--audio_path', type=str, help='Path to the audio file')
     parser.add_argument('-t', '--matching_threshold', type=float, default=2.5, help='Matching threshold percentage')
     parser.add_argument('-r', '--time_resolution_ms', type=int, default=25, help='Time resolution in ms')
     parser.add_argument('-a', '--tone_a_min_length', type=float, default=0.7, help='Min length of tone A in seconds')
@@ -39,4 +39,5 @@ def main():
     print(json.dumps(data_dict))
 
 
-main()
+if __name__ == '__main__':
+    main()

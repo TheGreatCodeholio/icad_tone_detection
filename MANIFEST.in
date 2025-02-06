@@ -1,2 +1,3 @@
 include README.md
-include examples/*
+recursive-include src/icad_tone_detection/examples *
+recursive-include src/icad_tone_detection/bin *
