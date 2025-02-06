@@ -54,10 +54,9 @@ jobs:
           pip install build toml
 
       - name: Extract version
-        id: get_version
         run: |
           VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
-          echo "::set-output name=version::$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Prune extra binaries
         run: |
@@ -128,12 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Get version from build
-        run: |
-          echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
+      - name: Export version from build job
+        run: echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
 
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           # Grab all python versions for this platform
           name: dist-${{ matrix.platform }}-py**
