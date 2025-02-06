@@ -9,78 +9,62 @@ jobs:
   # 1) Build wheels for each (platform, python-version)
   # ------------------------------------------------------------------
   build:
-    # We’ll select a runner dynamically based on matrix.platform
-    runs-on: ${{ steps.pick_runner.outputs.runner }}
+    # Instead of pick_runner, we define a matrix with both 'platform' and 'os'
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux_x86_64, linux_arm64, windows_x86_64, macos_x86_64, macos_arm64]
+        include:
+          # 5 platforms with a mapped 'os':
+          - platform: linux_x86_64
+            os: ubuntu-latest
+          - platform: linux_arm64
+            os: ubuntu-latest
+          - platform: windows_x86_64
+            os: windows-latest
+          - platform: macos_x86_64
+            os: macos-latest
+          - platform: macos_arm64
+            os: macos-latest
+
+        # Now also vary the python version
         python-version: ["3.10", "3.11", "3.12"]
 
+      # That yields 15 builds (5 platforms × 3 py versions)
+
+    # This sets the runner from the matrix 'os' key
+    runs-on: ${{ matrix.os }}
+
     permissions:
-      id-token: write  # Needed for PyPI Trusted Publisher
+      id-token: write
 
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
     steps:
-      # -----------------------------
-      # 1a) Dynamically set up runner
-      # -----------------------------
-      - id: pick_runner
-        run: |
-          case "${{ matrix.platform }}" in
-            linux_x86_64|linux_arm64)
-              echo "runner=ubuntu-latest" >> $GITHUB_OUTPUT
-              ;;
-            windows_x86_64)
-              echo "runner=windows-latest" >> $GITHUB_OUTPUT
-              ;;
-            macos_x86_64|macos_arm64)
-              echo "runner=macos-latest" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
-      # -----------------------------
-      # 1b) Check out code
-      # -----------------------------
       - uses: actions/checkout@v3
 
-      # -----------------------------
-      # 1c) Setup Python
-      # -----------------------------
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
 
-      # -----------------------------
-      # 1d) Install build tools
-      # -----------------------------
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install build
 
-      # -----------------------------
-      # 1e) Extract version
-      # -----------------------------
-      - name: Extract version from pyproject.toml
+      - name: Extract version
         id: get_version
         run: |
           VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           echo "::set-output name=version::$VERSION"
 
-      # -----------------------------
-      # (Optional) Prune Binaries
-      # If you store different binaries under src/icad_tone_detection/bin/<os>_<arch>,
-      # remove those that don't match matrix.platform
-      # -----------------------------
       - name: Prune extra binaries
         run: |
+          # Remove bin folders that don't match `matrix.platform`
+          # e.g. if platform=linux_x86_64, remove windows_* / macos_* / linux_arm64, etc.
           if [[ "${{ matrix.platform }}" == linux_* ]]; then
             rm -rf src/icad_tone_detection/bin/macos_* src/icad_tone_detection/bin/windows_* || true
-            # If you're distinguishing x86_64 from arm64, remove the other:
             if [[ "${{ matrix.platform }}" == "linux_x86_64" ]]; then
               rm -rf src/icad_tone_detection/bin/linux_arm64 || true
             else
@@ -96,89 +80,63 @@ jobs:
               rm -rf src/icad_tone_detection/bin/macos_x86_64 || true
             fi
           fi
-
-          # Make sure non-Windows binaries are executable:
           find src/icad_tone_detection/bin -type f ! -name '*.exe' -exec chmod +x {} \; 2>/dev/null || true
 
-      # -----------------------------
-      # 1f) Build Python package
-      # -----------------------------
       - name: Build distributions (wheel + sdist)
         run: python -m build
 
-      # -----------------------------
-      # 1g) Upload artifacts
-      # Name them to reflect platform + Py version
-      # -----------------------------
-      - name: Upload built packages to artifacts
+      - name: Upload built artifacts
         uses: actions/upload-artifact@v3
         with:
           name: dist-${{ matrix.platform }}-py${{ matrix.python-version }}
           path: dist/*
 
-      # -----------------------------
-      # 1h) Publish to PyPI (OPTIONAL)
-      # If you want to publish from each OS or only 1
-      # -----------------------------
       - name: Publish package via Trusted Publisher
         if: ${{ github.ref == 'refs/heads/main' && (matrix.python-version == '3.10' || matrix.python-version == '3.11' || matrix.python-version == '3.12') }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           environment: pypi
-          # If you want to publish to TestPyPI, add: repository-url: https://test.pypi.org/legacy/
-        # This uses OIDC, no password needed
 
   # ------------------------------------------------------------------
-  # 2) Create a separate GitHub Release for each OS/arch
+  # 2) Create a separate GitHub Release per OS/arch
   # ------------------------------------------------------------------
   release:
-    # We run once per platform. Possibly we don't need a python-version dimension here
     needs: build
-    runs-on: ${{ steps.pick_runner.outputs.runner }}
 
+    # Same approach: define 'platform' + 'os' in the matrix
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux_x86_64, linux_arm64, windows_x86_64, macos_x86_64, macos_arm64]
+        include:
+          - platform: linux_x86_64
+            os: ubuntu-latest
+          - platform: linux_arm64
+            os: ubuntu-latest
+          - platform: windows_x86_64
+            os: windows-latest
+          - platform: macos_x86_64
+            os: macos-latest
+          - platform: macos_arm64
+            os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+
+    if: github.ref == 'refs/heads/main'
 
     steps:
-      # -------------------------------
-      # 2a) Select the runner again
-      # -------------------------------
-      - id: pick_runner
-        run: |
-          case "${{ matrix.platform }}" in
-            linux_x86_64|linux_arm64)
-              echo "runner=ubuntu-latest" >> $GITHUB_OUTPUT
-              ;;
-            windows_x86_64)
-              echo "runner=windows-latest" >> $GITHUB_OUTPUT
-              ;;
-            macos_x86_64|macos_arm64)
-              echo "runner=macos-latest" >> $GITHUB_OUTPUT
-              ;;
-          esac
-
       - uses: actions/checkout@v3
 
       - name: Get version from build
         run: |
           echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
 
-      # -------------------------------
-      # 2b) Download the correct artifact
-      # If we only want, say, Python 3.10 artifacts, change the pattern accordingly
-      # -------------------------------
       - name: Download artifacts
         uses: actions/download-artifact@v3
         with:
+          # Grab all python versions for this platform
           name: dist-${{ matrix.platform }}-py**
           path: dist
 
-      # -------------------------------
-      # 2c) Create a unique release per platform
-      # e.g. "v1.2.3-linux_x86_64"
-      # -------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
