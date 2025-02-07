@@ -26,14 +26,12 @@ def choose_decode_binary():
     # Example logic:
     if system == "linux":
         if "arm" in arch:
-            return _path_to_bin("linux_aarch64", "icad_decode")
+            return _path_to_bin("linux_arm64", "icad_decode")
         else:
             return _path_to_bin("linux_x86_64", "icad_decode")
     elif system == "darwin":
-        if "arm" in arch:
-            return _path_to_bin("macos_arm64", "icad_decode")
-        else:
-            return _path_to_bin("macos_x86_64", "icad_decode")
+        return _path_to_bin("macos_arm64", "icad_decode")
+
     elif system == "windows":
         return _path_to_bin("windows_x86_64", "icad_decode.exe")
     else:

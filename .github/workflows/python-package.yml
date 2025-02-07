@@ -2,171 +2,40 @@ name: Build and Publish
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
-  # ------------------------------------------------------------------
-  # 1) Build wheels for each (platform, python-version)
-  # ------------------------------------------------------------------
-  build:
-    # We'll do 5 OS/arch combos multiplied by 3 Python versions => 15 jobs
-    strategy:
-      fail-fast: false
-      matrix:
-        # OS version/arch to build on
-        os: ["ubuntu-latest","ubuntu-22.04-arm","windows-latest","macos-13","macos-latest"]
-        # The Python versions we want to build for:
-        python-version: ["3.10", "3.11", "3.12"]
-        # For each of these, we "include" an OS+arch combination,
-        # with the correct runner label from the current GitHub docs:
-        include:
-          - os: ubuntu-latest
-            platform: linux_x86_64
+  pypi-publish:
+    runs-on: ubuntu-latest
 
-          # For Linux arm64, use the public preview label:
-          - os: ubuntu-22.04-arm
-            platform: linux_arm64
+    environment:
+      name: pypi
+      url: https://pypi.org/p/icad_tone_detection
 
-          - os: windows-latest
-            platform: windows_x86_64
-
-          # macOS x86_64 (Intel):
-          - os: macos-13
-            platform: macos_x86_64
-
-          # macOS arm64 (M1):
-          - os: macos-latest
-            platform: macos_arm64
-
-    # The job will run on whichever OS label is in matrix.os
-    runs-on: ${{ matrix.os }}
-
-    # We want to publish to PyPI via OpenID Connect, so we set permission:
     permissions:
+      contents: read
       id-token: write
 
-    # We will capture the package version from one of the steps and pass it to the 'release' job
-    outputs:
-      version: ${{ steps.get_version.outputs.version }}
-
     steps:
-      - uses: actions/checkout@v3
+      - name: Check out code
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v3
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.10'
 
-      - name: Install build dependencies
+      - name: Upgrade pip & install build
         run: |
           python -m pip install --upgrade pip
-          pip install build toml
+          python -m pip install build
 
-      # Extract the version from pyproject.toml
-      - name: Extract version
-        id: get_version
-        shell: bash  # needed for `VERSION=$(...)` to work on Windows, too
+      - name: Build only a wheel from pyproject.toml
         run: |
-          VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # By default, "python -m build" creates both wheel + sdist.
+          # You can limit to just wheel with --wheel:
+          python -m build
 
-      - name: Prune extra binaries
-        shell: bash
-        run: |
-          if [[ "${{ matrix.platform }}" == linux_* ]]; then
-            rm -rf src/icad_tone_detection/bin/macos_* src/icad_tone_detection/bin/windows_* || true
-            if [[ "${{ matrix.platform }}" == "linux_x86_64" ]]; then
-              rm -rf src/icad_tone_detection/bin/linux_arm64 || true
-            else
-              rm -rf src/icad_tone_detection/bin/linux_x86_64 || true
-            fi
-          elif [[ "${{ matrix.platform }}" == windows_* ]]; then
-            rm -rf src/icad_tone_detection/bin/linux_* src/icad_tone_detection/bin/macos_* || true
-          elif [[ "${{ matrix.platform }}" == macos_* ]]; then
-            rm -rf src/icad_tone_detection/bin/windows_* src/icad_tone_detection/bin/linux_* || true
-            if [[ "${{ matrix.platform }}" == "macos_x86_64" ]]; then
-              rm -rf src/icad_tone_detection/bin/macos_arm64 || true
-            else
-              rm -rf src/icad_tone_detection/bin/macos_x86_64 || true
-            fi
-          fi
-          # Make sure non-Windows binaries are executable
-          find src/icad_tone_detection/bin -type f ! -name '*.exe' -exec chmod +x {} \; 2>/dev/null || true
-
-      - name: Build distributions (wheel + sdist)
-        run: python -m build
-
-      # Upload artifacts so the 'release' job can download them
-      - name: Upload built artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.platform }}-py${{ matrix.python-version }}
-          path: dist/*
-          if-no-files-found: error
-
-      # Optionally publish to test.pypi.org if platform == linux_x86_64
-      - name: Publish package via Trusted Publisher
-        if: ${{ github.ref == 'refs/heads/main' && matrix.platform == 'linux_x86_64' }}
+      - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true
-          repository-url: 'https://test.pypi.org/legacy/'
-          # Or set to real PyPI: 'https://upload.pypi.org/legacy/'
-
-  # ------------------------------------------------------------------
-  # 2) Create a separate GitHub Release per OS/arch
-  # ------------------------------------------------------------------
-  release:
-    needs: build
-    # We'll do five sub-jobs, one per platform.
-    # Each sub-job will download all 3 artifacts for that platform (for 3 Python versions).
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux_x86_64
-            os: ubuntu-latest
-          - platform: linux_arm64
-            os: ubuntu-22.04-arm
-          - platform: windows_x86_64
-            os: windows-latest
-          - platform: macos_x86_64
-            os: macos-13
-          - platform: macos_arm64
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Export version from build job
-        run: echo "VERSION=${{ needs.build.outputs.version }}" >> $GITHUB_ENV
-
-      # Download all 3 python-version artifacts for this platform:
-      - name: Download artifacts (Py3.10)
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-${{ matrix.platform }}-py3.10
-          path: dist
-
-      - name: Download artifacts (Py3.11)
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-${{ matrix.platform }}-py3.11
-          path: dist
-
-      - name: Download artifacts (Py3.12)
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-${{ matrix.platform }}-py3.12
-          path: dist
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ env.VERSION }}-${{ matrix.platform }}
-          name: Release v${{ env.VERSION }} for ${{ matrix.platform }}
-          files: dist/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
