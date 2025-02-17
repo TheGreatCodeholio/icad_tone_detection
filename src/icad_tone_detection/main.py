@@ -40,7 +40,7 @@ def choose_decode_binary():
 
 def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_a_min_length=0.7, tone_b_min_length=2.7,
                 hi_low_interval=0.2,
-                hi_low_min_alternations=6, long_tone_min_length=3.8, debug=False):
+                hi_low_min_alternations=6, long_tone_min_length=3.8, detect_mdc=True, mdc_high_pass=200, mdc_low_pass=4000, detect_dtmf=True, debug=False):
     """
         Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
 
@@ -55,6 +55,10 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_
            - long_tone_min_length (float): The minimum length a long tone needs to be to consider it a match. Default 3.8 Seconds
            - hi_low_interval (float): The maximum allowed interval in seconds between two consecutive alternating tones. Default is 0.2 Seconds
            - hi_low_min_alternations (int): The minimum number of alternations for a hi-low warble tone sequence to be considered valid. Default 6
+           - detect_mdc (bool): detect MDC/FleetSync
+           - mdc_high_pass (int): The high pass filter for detecting MDC/FleetSync
+           - mdc_low_pass (int): The low pass filter for detecting MDC/FleetSync
+           - detect_dtmf (bool): detect DTMF
            - debug (bool): If debug is enabled, print all tones found in audio file. Default is False
 
         Returns:
@@ -86,6 +90,10 @@ Tone B Min Length:        {tone_b_min_length} s
 Long Tone Min Length:     {long_tone_min_length} s
 Hi-Low Interval:          {hi_low_interval} s
 Hi-Low Min Alternations:  {hi_low_min_alternations}
+Detect MDC/FleetSync:     {detect_mdc}
+MDC/FleetSync High Pass:  {mdc_high_pass}
+MDC/FleetSync Low Pass:   {mdc_low_pass}
+Detect DTMF:              {detect_dtmf}
 
 Matched Frequencies:
   {matched_frequencies}
@@ -96,7 +104,13 @@ Matched Frequencies:
     two_tone_result = detect_two_tone(matched_frequencies, tone_a_min_length, tone_b_min_length)
     long_result = detect_long_tones(matched_frequencies, two_tone_result, long_tone_min_length)
     hi_low_result = detect_warble_tones(matched_frequencies, hi_low_interval, hi_low_min_alternations)
-    mdc_result = detect_mdc_tones(audio_segment, binary_path=icad_decode_path)
-    dtmf_result = detect_dtmf_tones(audio_segment, binary_path=icad_decode_path)
+    if detect_mdc:
+        mdc_result = detect_mdc_tones(audio_segment, binary_path=icad_decode_path, highpass_freq=mdc_high_pass, lowpass_freq=mdc_low_pass)
+    else:
+        mdc_result = []
+    if detect_dtmf:
+        dtmf_result = detect_dtmf_tones(audio_segment, binary_path=icad_decode_path)
+    else:
+        dtmf_result = []
 
     return ToneDetectionResult(two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result)

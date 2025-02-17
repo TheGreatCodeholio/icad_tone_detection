@@ -165,7 +165,6 @@ def detect_mdc_tones(
         binary_path: str = "icad_decode",
         highpass_freq: int = 200,
         lowpass_freq: int = 4000,
-        require_unsigned_8bit: bool = True
 ) -> list[str]:
     """
     Decode MDC1200 (or Fleetsync) frames from a PyDub AudioSegment by piping raw audio to an external 'icad_decode' binary.
@@ -174,10 +173,6 @@ def detect_mdc_tones(
     :param binary_path:          Path to the 'icad_decode' executable (default: 'icad_decode').
     :param highpass_freq:       Frequency in Hz for highpass filter (default: 200).
     :param lowpass_freq:        Frequency in Hz for lowpass filter (default: 4000).
-    :param require_unsigned_8bit:
-                                Whether to shift samples from signed 8-bit (PyDub default) to unsigned 8-bit.
-                                If True, each sample is shifted by +128. If your icad_decode can handle signed 8-bit,
-                                set this to False. (default: True)
 
     :return: mdc_matches list of dicts each dict representing a detected sequence of MDC1200 (or Fleetsync) frames.
 
@@ -214,8 +209,7 @@ def detect_mdc_tones(
     # If your decoder expects samples in the range 0..255 (unsigned), we must shift
     # the PyDub data (which is -128..+127 for 8-bit signed).
     raw_data = segment.raw_data
-    if require_unsigned_8bit:
-        raw_data = bytes((s + 128) & 0xFF for s in raw_data)
+    raw_data = bytes((s + 128) & 0xFF for s in raw_data)
 
     # ----------------------------------------------------------------
     # 3) Pipe the raw audio bytes into 'icad_decode' via subprocess
