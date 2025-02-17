@@ -1,5 +1,7 @@
 import importlib
 import platform
+import stat
+from pathlib import Path
 
 from .audio_loader import load_audio
 from .frequency_extraction import FrequencyExtraction
@@ -20,22 +22,30 @@ def _path_to_bin(folder_name, binary_name):
 
 
 def choose_decode_binary():
-    system = platform.system().lower()  # e.g. "linux", "darwin", "windows"
-    arch = platform.machine().lower()  # e.g. "x86_64", "arm64"
+    system = platform.system().lower()
+    arch = platform.machine().lower()
 
-    # Example logic:
     if system == "linux":
         if "arm" in arch:
-            return _path_to_bin("linux_arm64", "icad_decode")
+            resource = _path_to_bin("linux_arm64", "icad_decode")
         else:
-            return _path_to_bin("linux_x86_64", "icad_decode")
+            resource = _path_to_bin("linux_x86_64", "icad_decode")
     elif system == "darwin":
-        return _path_to_bin("macos_arm64", "icad_decode")
-
+        resource = _path_to_bin("macos_arm64", "icad_decode")
     elif system == "windows":
         return _path_to_bin("windows_x86_64", "icad_decode.exe")
     else:
         raise RuntimeError(f"Unsupported OS/arch: {system}/{arch}")
+
+    # If not on Windows, try to chmod +x (assuming it's a real file on disk)
+    if system != "windows":
+        # `resource` is a Traversable. Usually you can do resource.__fspath__()
+        # or cast to Path if you know it’s a FilePath:
+        real_path = Path(resource)
+        old_mode = real_path.stat().st_mode
+        real_path.chmod(old_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    return resource
 
 
 def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_a_min_length=0.7, tone_b_min_length=2.7,

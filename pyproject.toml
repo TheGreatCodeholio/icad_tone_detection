@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "icad_tone_detection"
-version = "2.1"
+version = "2.2"
 authors = [
   {name = "TheGreatCodeholio", email = "ian@icarey.net"},
 ]
@@ -27,6 +27,7 @@ classifiers = [
 packages = ["icad_tone_detection"]
 package-dir = {"" = "src"}
 include-package-data = true
+zip-safe = false
 
 [tool.setuptools.package-data]
 "icad_tone_detection" = ["examples/**/*", "bin/**/*"]
