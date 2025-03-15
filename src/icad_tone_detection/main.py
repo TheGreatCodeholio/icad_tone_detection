@@ -48,7 +48,7 @@ def choose_decode_binary():
     return resource
 
 
-def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_a_min_length=0.7, tone_b_min_length=2.7,
+def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_a_min_length=0.85, tone_b_min_length=2.6,
                 hi_low_interval=0.2,
                 hi_low_min_alternations=6, long_tone_min_length=3.8, detect_mdc=True, mdc_high_pass=200, mdc_low_pass=4000, detect_dtmf=True, debug=False):
     """
@@ -59,8 +59,8 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=25, tone_
            - matching_threshold (float): The percentage threshold used to determine if two frequencies
                 are considered a match. For example, a threshold of 2 means that two frequencies are considered matching
                 if they are within x% of each other. Default 2.5%
-           - time_resolution_ms (int): The time resolution in milliseconds for the STFT. Default is 25ms.
-           - tone_a_min_length (float): The minimum length in seconds of an A tone for two tone detections. Default 0.8 Seconds
+           - time_resolution_ms (int): The time resolution in milliseconds for the STFT. Default is 50ms.
+           - tone_a_min_length (float): The minimum length in seconds of an A tone for two tone detections. Default 0.85 Seconds
            - tone_b_min_length (float): The minimum length in seconds of a B tone for two tone detections. Default 2.8 Seconds
            - long_tone_min_length (float): The minimum length a long tone needs to be to consider it a match. Default 3.8 Seconds
            - hi_low_interval (float): The maximum allowed interval in seconds between two consecutive alternating tones. Default is 0.2 Seconds

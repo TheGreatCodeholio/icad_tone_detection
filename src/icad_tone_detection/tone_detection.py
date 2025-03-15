@@ -3,6 +3,7 @@ import shutil
 import subprocess
 
 from pydub import AudioSegment
+from wheel.macosx_libfile import segment_command_fields_64
 
 
 def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=2.7):
@@ -191,10 +192,6 @@ def detect_mdc_tones(
     # ----------------------------------------------------------------
     # 1) Resample, convert to mono, apply filters
     # ----------------------------------------------------------------
-    # Convert to 22050 Hz, mono, 16-bit (PyDub uses signed 8-bit by default)
-    segment = segment.set_frame_rate(22050)
-    segment = segment.set_channels(1)
-    segment = segment.set_sample_width(2)  # 16-bit, *signed* in PyDub
 
     # Apply high-pass and low-pass filters in PyDub
     # (Not identical to SoX, but usually good enough for typical use)
@@ -209,7 +206,7 @@ def detect_mdc_tones(
     # If your decoder expects samples in the range 0..255 (unsigned), we must shift
     # the PyDub data (which is -128..+127 for 8-bit signed).
     raw_data = segment.raw_data
-    raw_data = bytes((s + 128) & 0xFF for s in raw_data)
+    #raw_data = bytes((s + 128) & 0xFF for s in raw_data)
 
     # ----------------------------------------------------------------
     # 3) Pipe the raw audio bytes into 'icad_decode' via subprocess
@@ -243,6 +240,7 @@ def detect_mdc_tones(
     lines = binary_stdout.strip().splitlines()
 
     for line in lines:
+        print(line)
         try:
             obj = json.loads(line)
             mdc_matches.append(obj)
@@ -253,19 +251,21 @@ def detect_mdc_tones(
 
 def detect_dtmf_tones(
         segment: AudioSegment,
-        binary_path: str = "icad_decode"
+        binary_path: str = "icad_decode",
+        highpass_freq: int = 0,
+        lowpass_freq: int = 0
 ) -> list[str]:
     """
-    Decode dtmf tones from a PyDub AudioSegment by piping raw audio to an external 'decode' binary.
+    Decode DTMF tones by piping raw audio to an external 'icad_decode' binary.
 
-    :param segment:             A PyDub AudioSegment containing audio to decode.
-    :param binary_path:          Path to the 'icad_decode' executable (default: 'icad_decode').
+    :param segment: PyDub AudioSegment (16-bit, 16 kHz, mono recommended).
+    :param binary_path: Path to the 'icad_decode' executable (default 'icad_decode').
+    :param highpass_freq: Frequency (Hz) for high-pass filter. 0 or None to skip.
+    :param lowpass_freq: Frequency (Hz) for low-pass filter. 0 or None to skip.
 
-    :return: dtmf_matches list of dicts each dict representing a detected dtmf key press.
-
-    :raises FileNotFoundError:  If binary_path is not found on the system.
-    :raises ValueError:         If the audio segment is empty or too short to process.
-    :raises RuntimeError:       If 'icad_decode' fails to run properly or returns a nonzero exit code.
+    :return: dtmf_matches list of dicts, each representing a detected DTMF key press.
+    :raises RuntimeError: if the decode process fails or returns non-zero.
+    :raises ValueError: if the segment is empty.
     """
 
     dtmf_matches = []
@@ -274,13 +274,13 @@ def detect_dtmf_tones(
     if len(segment) == 0:
         raise ValueError("The provided AudioSegment is empty (0 ms). Nothing to decode.")
 
-    # ----------------------------------------------------------------
-    # 1) Resample, convert to mono, apply filters
-    # ----------------------------------------------------------------
-    # Convert to 22050 Hz, mono, 16-bit
-    segment = segment.set_frame_rate(22050) # 22050 frame rate
-    segment = segment.set_channels(1) # Mono
-    segment = segment.set_sample_width(2)  # 16-bit, *signed* in PyDub
+    # Apply High Pass Filter
+    if highpass_freq and highpass_freq > 0:
+        segment = segment.high_pass_filter(highpass_freq)
+
+    # Apply Low Pass Filter
+    if lowpass_freq and lowpass_freq > 0:
+        segment = segment.low_pass_filter(lowpass_freq)
 
     raw_data = segment.raw_data
 
