@@ -10,17 +10,17 @@ A Python library for extracting scanner radio tones from scanner audio. This inc
 ## Features
 
 - **Easy-to-use** main function `tone_detect` for detecting:
-  - Two-Tone / Quick Call tones
-  - Long tones
-  - Hi-Low / warble tones
-  - MDC1200 / FleetSync
-  - DTMF
+    - Two-Tone / Quick Call tones
+    - Long tones
+    - Hi-Low / warble tones
+    - MDC1200 / FleetSync
+    - DTMF
 - **Flexible audio input**: Local file paths, URLs, raw byte data, `io.BytesIO`, or existing `pydub.AudioSegment`.
-- **Automatic resampling** to 16 kHz mono for consistent detection.
+- **Automatic resampling** to PCM 16bit @16 kHz mono for consistent detection.
 - **Cross-platform** included binaries for MDC/DTMF decoding:
-  - Windows (x86_64)
-  - Linux (x86_64, ARM64)
-  - macOS (ARM64)
+    - Windows (x86_64)
+    - Linux (x86_64, ARM64)
+    - macOS (ARM64)
 - **Configurable** detection thresholds and parameters.
 
 ---
@@ -36,10 +36,10 @@ pip install icad_tone_detection
 - Python 3.10 or later.
 - [ffmpeg](https://ffmpeg.org/) (must be installed and available on the system `PATH`).
 - The following Python packages (automatically installed if not present):
-  - `numpy>=1.26.4`
-  - `requests>=2.31.0`
-  - `pydub>=0.25.1`
-  - `scipy>=1.12.0`
+    - `numpy>=1.26.4`
+    - `requests>=2.31.0`
+    - `pydub>=0.25.1`
+    - `scipy>=1.12.0`
 
 ---
 
@@ -55,19 +55,19 @@ audio_path = "my_scanner_recording.wav"
 
 # Detect various tones
 result = tone_detect(
-    audio_path=audio_path,
-    matching_threshold=2.5,   # % difference threshold for grouping frequencies
-    time_resolution_ms=50,    # STFT window hop in ms
-    tone_a_min_length=0.85,   # Minimum A-tone length for Quick Call
-    tone_b_min_length=2.6,    # Minimum B-tone length for Quick Call
-    hi_low_interval=0.2,      # Maximum gap between warble tones
-    hi_low_min_alternations=6,# Minimum alternations for hi-low
-    long_tone_min_length=3.8, # Minimum length for long tone
-    detect_mdc=True,          # Enable MDC1200/FleetSync detection
-    mdc_high_pass=200,        # High-pass frequency for MDC decoding
-    mdc_low_pass=4000,        # Low-pass frequency for MDC decoding
-    detect_dtmf=True,         # Enable DTMF detection
-    debug=False               # Print debug info
+audio_path=audio_path,
+matching_threshold=2.5,   # % difference threshold for grouping frequencies
+time_resolution_ms=50,    # STFT window hop in ms
+tone_a_min_length=0.85,   # Minimum A-tone length for Quick Call
+tone_b_min_length=2.6,    # Minimum B-tone length for Quick Call
+hi_low_interval=0.2,      # Maximum gap between warble tones
+hi_low_min_alternations=6,# Minimum alternations for hi-low
+long_tone_min_length=3.8, # Minimum length for long tone
+detect_mdc=True,          # Enable MDC1200/FleetSync detection
+mdc_high_pass=200,        # High-pass frequency for MDC decoding
+mdc_low_pass=4000,        # Low-pass frequency for MDC decoding
+detect_dtmf=True,         # Enable DTMF detection
+debug=False               # Print debug info
 )
 
 # Results are available in the ToneDetectionResult object:
@@ -85,8 +85,8 @@ print("DTMF:", result.dtmf_result)
 The `tone_detect` function can handle:
 
 1. **String** pointing to:
-   - A local file path (e.g., `"audio.wav"`)
-   - A URL (e.g., `"https://example.com/audio.wav"`)
+    - A local file path (e.g., `"audio.wav"`)
+    - A URL (e.g., `"https://example.com/audio.wav"`)
 2. **Bytes** or **bytearray** objects (raw audio data).
 3. **File-like objects** (`io.BytesIO`, open file handle, etc.).
 4. **`pydub.AudioSegment`** objects.
@@ -100,14 +100,14 @@ If you pass a local file path or a URL, the library will attempt to read the aud
 ### `tone_detect(...)`
 
 ```python
-def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, 
-                tone_a_min_length=0.85, tone_b_min_length=2.6,
-                hi_low_interval=0.2, hi_low_min_alternations=6, 
-                long_tone_min_length=3.8, detect_mdc=True, mdc_high_pass=200, 
-                mdc_low_pass=4000, detect_dtmf=True, debug=False):
-    """
-    Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
-    
+def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50,
+tone_a_min_length=0.85, tone_b_min_length=2.6,
+hi_low_interval=0.2, hi_low_min_alternations=6,
+long_tone_min_length=3.8, detect_mdc=True, mdc_high_pass=200,
+mdc_low_pass=4000, detect_dtmf=True, debug=False):
+"""
+Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
+
     Parameters:
         audio_path: string or other supported input types
         matching_threshold (float): ...
@@ -134,7 +134,7 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50,
     pass
 ```
 
-**Parameters**  
+**Parameters**
 - **audio_path** (various types):  
   The source of audio. Can be a string (path or URL), bytes, `BytesIO`, or `AudioSegment`.
 - **matching_threshold** (float):  
@@ -184,6 +184,12 @@ A `ToneDetectionResult` object with the fields:
 
 Each field holds a list of detected tones or an empty list if none found.
 
+**Result Caveats**
+
+The result includes timestamps in the file where the tones were detected as `start` and `end`. 
+These may not align with the original audio due to internal conversions from your input to PCM 16bit @16kHz Mono. If 
+those timestamps are important make sure the input matches those requirements.
+
 ---
 
 ## Command-Line Example
@@ -192,12 +198,12 @@ There is an example script called `detect_test.py` under the `examples/` folder.
 
 ```bash
 python examples/detect_test.py -p my_scanner_recording.wav \
-  --matching_threshold 2.5 \
-  --time_resolution_ms 25 \
-  --tone_a_min_length 0.7 \
-  --tone_b_min_length 2.7 \
-  --long_tone_min_length 3.8 \
-  --debug
+--matching_threshold 2.5 \
+--time_resolution_ms 25 \
+--tone_a_min_length 0.7 \
+--tone_b_min_length 2.7 \
+--long_tone_min_length 3.8 \
+--debug
 ```
 
 This script prints out the detected tone data in JSON to stdout.

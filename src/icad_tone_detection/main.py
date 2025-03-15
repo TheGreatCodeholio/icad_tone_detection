@@ -85,29 +85,45 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
     matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold,
                                               time_resolution_ms).get_audio_frequencies()
     if debug is True:
+        if matched_frequencies:
+            freq_lines = []
+            for idx, (start, end, length, freq_list) in enumerate(matched_frequencies, start=1):
+                # Convert freq_list to a simple string; optionally truncate if extremely large
+                freq_str = ", ".join(str(freq) for freq in freq_list)
+                freq_lines.append(
+                    f"  {idx:2d}) Start={start:.2f}s | End={end:.2f}s | Dur={length:.2f}s\n"
+                    f"       Freqs: [{freq_str}]"
+                )
+            freq_summary = "\n".join(freq_lines)
+        else:
+            freq_summary = "  None"
+
+
         debug_info = f"""
-############################################
-Using decode binary path:
-  {icad_decode_path}
-############################################
+############################################################
+ICAD Tone Detection: DEBUG
+------------------------------------------------------------
+Decode binary path:        {icad_decode_path}
+Analyzing audio at:        {audio_path}
 
-Analyzing audio at: {audio_path}
+Matching Threshold:        {matching_threshold}%
+Time Resolution (ms):      {time_resolution_ms}
+Tone A Min Length (s):     {tone_a_min_length}
+Tone B Min Length (s):     {tone_b_min_length}
+Long Tone Min Length (s):  {long_tone_min_length}
+Hi-Low Interval (s):       {hi_low_interval}
+Hi-Low Min Alternations:   {hi_low_min_alternations}
+Detect MDC/FleetSync:      {detect_mdc}
+  MDC High Pass (Hz):      {mdc_high_pass}
+  MDC Low Pass (Hz):       {mdc_low_pass}
+Detect DTMF:               {detect_dtmf}
 
-Matching Threshold:       {matching_threshold}%
-Time Resolution:          {time_resolution_ms} ms
-Tone A Min Length:        {tone_a_min_length} s
-Tone B Min Length:        {tone_b_min_length} s
-Long Tone Min Length:     {long_tone_min_length} s
-Hi-Low Interval:          {hi_low_interval} s
-Hi-Low Min Alternations:  {hi_low_min_alternations}
-Detect MDC/FleetSync:     {detect_mdc}
-MDC/FleetSync High Pass:  {mdc_high_pass}
-MDC/FleetSync Low Pass:   {mdc_low_pass}
-Detect DTMF:              {detect_dtmf}
+Total Duration (s):        {duration_seconds:.2f}
+Sample Rate (Hz):          {frame_rate}
 
-Matched Frequencies:
-  {matched_frequencies}
-############################################
+Matched Frequencies ({len(matched_frequencies)} groups):
+{freq_summary}
+############################################################
 """
         print(debug_info)
 
@@ -122,5 +138,19 @@ Matched Frequencies:
         dtmf_result = detect_dtmf_tones(audio_segment, binary_path=icad_decode_path)
     else:
         dtmf_result = []
+
+    if debug:
+        summary_info = f"""
+------------------------------------------------------------
+DETECTION SUMMARY
+------------------------------------------------------------
+Two-Tone (Quick Call): {len(two_tone_result)}
+Long Tones:            {len(long_result)}
+Hi-Low Warble:         {len(hi_low_result)}
+MDC1200/FleetSync:     {len(mdc_result)}
+DTMF:                  {len(dtmf_result)}
+------------------------------------------------------------
+"""
+        print(summary_info)
 
     return ToneDetectionResult(two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result)
