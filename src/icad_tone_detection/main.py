@@ -14,6 +14,7 @@ from .frequency_extraction import FrequencyExtraction
 from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, \
     detect_dtmf_tones
 
+version = 2.6
 
 class ToneDetectionResult:
     def __init__(self, two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result):
@@ -137,7 +138,7 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
 
         debug_info = f"""
 ############################################################
-ICAD Tone Detection: DEBUG
+ICAD Tone Detection: DEBUG - v{version}
 ------------------------------------------------------------
 Decode binary path:        {icad_decode_path}
 Analyzing audio at:        {audio_path}
