@@ -1,10 +1,8 @@
 import json
-import shutil
 import subprocess
 
 from pydub import AudioSegment
 from wheel.macosx_libfile import segment_command_fields_64
-
 
 def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=2.7):
     two_tone_matches = []
@@ -40,6 +38,9 @@ def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=
 
 
 def detect_long_tones(frequency_matches, detected_quickcall, min_duration=2.0):
+    if not frequency_matches:
+        return []
+
     long_tone_matches = []
     excluded_frequencies = set([0.0])  # Initializing with 0.0 Hz to exclude it
 
@@ -100,6 +101,8 @@ def detect_warble_tones(frequency_matches, interval_length, min_alternations):
     Returns:
     - A list of dictionaries, each representing a detected sequence of warble tones with its details.
     """
+    if not frequency_matches:
+        return []
     sequences = []
     id_index = 1
 

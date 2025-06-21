@@ -6,7 +6,6 @@ from typing import Union, IO, Tuple
 import numpy as np
 from pydub import AudioSegment
 import requests
-from io import BytesIO, IOBase
 
 
 def load_audio(audio_input: Union[str, bytes, bytearray, IO, AudioSegment]) -> Tuple[AudioSegment, np.ndarray, int, float]:
@@ -60,10 +59,9 @@ def load_audio(audio_input: Union[str, bytes, bytearray, IO, AudioSegment]) -> T
     elif isinstance(audio_input, str):
         if audio_input.startswith("http://") or audio_input.startswith("https://"):
             # It's a URL: download the audio data
-            resp = requests.get(audio_input)
-            if resp.status_code != 200:
-                raise ValueError(f"Failed to fetch audio from URL. Status: {resp.status_code}")
-            input_bytes = resp.content
+            response = requests.get(audio_input)
+            response.raise_for_status()
+            input_bytes = response.content
         else:
             # It's a local file path
             if not os.path.isfile(audio_input):

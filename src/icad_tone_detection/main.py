@@ -1,11 +1,18 @@
 import importlib
 import platform
+import shutil
 import stat
 from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Dict
+
+import requests
 
 from .audio_loader import load_audio
+from .exceptions import AudioLoadError, FrequencyExtractionError, ToneDetectionError, FFmpegNotFoundError
 from .frequency_extraction import FrequencyExtraction
-from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, detect_dtmf_tones
+from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, \
+    detect_dtmf_tones
 
 
 class ToneDetectionResult:
@@ -16,10 +23,16 @@ class ToneDetectionResult:
         self.mdc_result = mdc_result
         self.dtmf_result = dtmf_result
 
+@dataclass
+class ToneDetectionResult:
+    two_tone_result: List[Dict]
+    long_result: List[Dict]
+    hi_low_result: List[Dict]
+    mdc_result: List[Dict]
+    dtmf_result: List[Dict]
 
 def _path_to_bin(folder_name, binary_name):
     return importlib.resources.files('icad_tone_detection').joinpath(f'bin/{folder_name}/{binary_name}')
-
 
 def choose_decode_binary():
     system = platform.system().lower()
@@ -75,15 +88,38 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
            - An instance of ToneDetectionResult containing information about the found tones in the audio.
 
         Raises:
-            -ValueError for unsupported audio input types or errors in processing.
+            ValueError: If the input type is unsupported, empty, or audio decoding fails.
+            FileNotFoundError: If the specified file path does not exist.
+            requests.RequestException: If the audio URL cannot be fetched.
+            FrequencyExtractionError: If the frequency extractor can not extract the tone data.
+            ToneDetectError: If there is an error running icad_decode for DTMF or MDC tones.
+            RuntimeError: If FFmpeg processing fails or a general processing error occurs.
         """
-
+    if shutil.which("ffmpeg") is None:
+        raise FFmpegNotFoundError(
+            "FFmpeg is not installed or not found in system PATH. Please install FFmpeg to use this module."
+        )
     icad_decode_path = choose_decode_binary()
 
-    audio_segment, samples, frame_rate, duration_seconds = load_audio(audio_path)
 
-    matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold,
-                                              time_resolution_ms).get_audio_frequencies()
+    try:
+        audio_segment, samples, frame_rate, duration_seconds = load_audio(audio_path)
+    except ValueError as ve:
+        raise AudioLoadError(f"Invalid input: {ve}") from ve
+    except FileNotFoundError as fe:
+        raise AudioLoadError(f"File not found: {fe}") from fe
+    except requests.RequestException as re:
+        raise AudioLoadError(f"HTTP error: {re}") from re
+    except RuntimeError as ffmpeg_error:
+        raise AudioLoadError(f"FFmpeg failed: {ffmpeg_error}") from ffmpeg_error
+    except Exception as e:
+        raise AudioLoadError(f"Unknown error: {type(e).__name__}: {e}") from e
+
+    try:
+        matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold, time_resolution_ms).get_audio_frequencies()
+    except Exception as e:
+        raise FrequencyExtractionError(f"Frequency extraction failed on {audio_path}: {e}") from e
+
     if debug is True:
         if matched_frequencies:
             freq_lines = []
@@ -130,12 +166,29 @@ Matched Frequencies ({len(matched_frequencies)} groups):
     two_tone_result = detect_two_tone(matched_frequencies, tone_a_min_length, tone_b_min_length)
     long_result = detect_long_tones(matched_frequencies, two_tone_result, long_tone_min_length)
     hi_low_result = detect_warble_tones(matched_frequencies, hi_low_interval, hi_low_min_alternations)
+    # MDC detection (can raise RuntimeError or ValueError)
     if detect_mdc:
-        mdc_result = detect_mdc_tones(audio_segment, binary_path=icad_decode_path, highpass_freq=mdc_high_pass, lowpass_freq=mdc_low_pass)
+        try:
+            mdc_result = detect_mdc_tones(
+                audio_segment,
+                binary_path=icad_decode_path,
+                highpass_freq=mdc_high_pass,
+                lowpass_freq=mdc_low_pass
+            )
+        except Exception as e:
+            raise ToneDetectionError(f"MDC detection failed: {e}") from e
     else:
         mdc_result = []
+
+    # DTMF detection (can raise RuntimeError or ValueError)
     if detect_dtmf:
-        dtmf_result = detect_dtmf_tones(audio_segment, binary_path=icad_decode_path)
+        try:
+            dtmf_result = detect_dtmf_tones(
+                audio_segment,
+                binary_path=icad_decode_path
+            )
+        except Exception as e:
+            raise ToneDetectionError(f"DTMF detection failed: {e}") from e
     else:
         dtmf_result = []
 

@@ -257,6 +257,6 @@ Contributions, bug reports, and feature requests are welcome. Please open issues
 ---
 
 > **Author**: [TheGreatCodeholio](mailto:ian@icarey.net)  
-> **Version**: 2.3  
+> **Version**: 2.5  
 > **Python versions**: 3.10+  
 > **License**: MIT

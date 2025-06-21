@@ -1,6 +1,8 @@
 from scipy.signal import stft
 import numpy as np
 
+from icad_tone_detection.exceptions import FrequencyExtractionError
+
 
 class FrequencyExtraction:
     """
@@ -60,11 +62,10 @@ class FrequencyExtraction:
 
             matching_frequencies = self.match_frequencies(detected_frequencies.tolist(), time_samples)
 
-            return matching_frequencies
+            return matching_frequencies or []
 
         except Exception as e:
-            print(f"Error extracting frequencies: {e}")
-            return None
+            raise FrequencyExtractionError(f"Failed to extract frequencies using STFT: {e}") from e
 
     def dynamic_threshold(self, frequencies, index):
         """
@@ -138,5 +139,4 @@ class FrequencyExtraction:
 
             return matching_frequencies
         except Exception as e:
-            print(f"Error matching frequencies: {e}")
-            return []
+            raise FrequencyExtractionError(f"Error matching frequencies: {e}") from e
