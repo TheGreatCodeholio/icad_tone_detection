@@ -32,32 +32,62 @@ class ToneDetectionResult:
     mdc_result: List[Dict]
     dtmf_result: List[Dict]
 
-def _path_to_bin(folder_name, binary_name):
-    return importlib.resources.files('icad_tone_detection').joinpath(f'bin/{folder_name}/{binary_name}')
+def _path_to_bin(folder: str, binary: str = "icad_decode"):
+    return resources.files("icad_tone_detection").joinpath(f"bin/{folder}/{binary}")
 
-def choose_decode_binary():
+def choose_decode_binary() -> Path:
+    """
+    Return a Path (or Traversable) to the correct `icad_decode` binary for the
+    current OS/CPU.
+
+    Supported folders shipped inside the wheel:
+
+        bin/
+          linux_x86_64/  icad_decode
+          linux_arm64/   icad_decode
+          linux_armv7/   icad_decode
+          macos_x86_64/  icad_decode
+          macos_arm64/   icad_decode
+          windows_x86_64/icad_decode.exe
+    """
     system = platform.system().lower()
-    arch = platform.machine().lower()
+    arch   = platform.machine().lower()
 
+    # ---------- Linux -------------------------------------------------
     if system == "linux":
-        if "arm" in arch:
-            resource = _path_to_bin("linux_arm64", "icad_decode")
+        if arch in ("x86_64", "amd64"):
+            folder, binary = "linux_x86_64", "icad_decode"
+        elif arch in ("aarch64", "arm64"):
+            folder, binary = "linux_arm64", "icad_decode"
+        elif arch.startswith("armv7"):
+            folder, binary = "linux_armv7", "icad_decode"
         else:
-            resource = _path_to_bin("linux_x86_64", "icad_decode")
-    elif system == "darwin":
-        resource = _path_to_bin("macos_arm64", "icad_decode")
-    elif system == "windows":
-        return _path_to_bin("windows_x86_64", "icad_decode.exe")
-    else:
-        raise RuntimeError(f"Unsupported OS/arch: {system}/{arch}")
+            raise RuntimeError(f"Unsupported Linux architecture: {arch}")
+        resource = _path_to_bin(folder, binary)
 
-    # If not on Windows, try to chmod +x (assuming it's a real file on disk)
+    # ---------- macOS -------------------------------------------------
+    elif system == "darwin":
+        folder = "macos_arm64" if arch == "arm64" else "macos_x86_64"
+        resource = _path_to_bin(folder, "icad_decode")
+
+    # ---------- Windows ----------------------------------------------
+    elif system == "windows":
+        if arch not in ("amd64", "x86_64"):
+            raise RuntimeError(f"Unsupported Windows architecture: {arch}")
+        resource = _path_to_bin("windows_x86_64", "icad_decode.exe")
+
+    else:
+        raise RuntimeError(f"Unsupported platform: {system}/{arch}")
+
+    # Ensure execute bit is set when the file is on disk (no-op inside zip)
     if system != "windows":
-        # `resource` is a Traversable. Usually you can do resource.__fspath__()
-        # or cast to Path if you know it’s a FilePath:
-        real_path = Path(resource)
-        old_mode = real_path.stat().st_mode
-        real_path.chmod(old_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        try:
+            real_path = Path(resource)            # will work if it's a FilePath
+            real_path.chmod(real_path.stat().st_mode |
+                            stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except (FileNotFoundError, OSError):
+            # resource might be inside a zip importer; ignore chmod errors
+            pass
 
     return resource
 

@@ -1,12 +1,16 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = [
+    "setuptools>=61",        # modern setuptools (PEP 621 metadata)
+    "setuptools-scm",        # keep if you still use SCM-based versioning
+    "wheel"                  # ← added so a wheel can always be built
+]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "icad_tone_detection"
-version = "2.6"
+version = "2.7.0"
 authors = [
-  {name = "TheGreatCodeholio", email = "ian@icarey.net"},
+    {name = "TheGreatCodeholio", email = "ian@icarey.net"},
 ]
 description = "A Python library for extracting scanner radio tones from scanner audio."
 readme = "README.md"
@@ -23,15 +27,21 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[project.scripts]
+icad-tone-detect = "icad_tone_detection.cli:main"
+
 [tool.setuptools]
-packages = ["icad_tone_detection"]
-package-dir = {"" = "src"}
+package-dir = {"" = "src"}          # sources live in src/
+packages = ["icad_tone_detection"]  # explicit list is fine
 include-package-data = true
 zip-safe = false
 
 [tool.setuptools.package-data]
-"icad_tone_detection" = ["examples/**/*", "bin/**/*"]
+"icad_tone_detection" = [
+    "examples/**/*",
+    "bin/**/*",
+]
 
 [project.urls]
 Homepage = "https://github.com/thegreatcodeholio/icad_tone_detection"
-Issues = "https://github.com/thegreatcodeholio/icad_tone_detection/issues"
+Issues    = "https://github.com/thegreatcodeholio/icad_tone_detection/issues"
