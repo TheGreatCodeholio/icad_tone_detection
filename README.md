@@ -73,7 +73,7 @@ Typical output with debug ⇣
 
 ```text
 D############################################################
-ICAD Tone Detection: DEBUG - v2.7.0
+ICAD Tone Detection: DEBUG - v2.7.1
 ------------------------------------------------------------
 Decode binary path:        /…/bin/linux_arm64/icad_decode
 Analyzing audio at:        my_scanner_recording.wav
@@ -163,4 +163,4 @@ Issues and pull-requests are welcome — visit the [GitHub repo](https://github.
 
 ## License
 
-MIT © TheGreatCodeholio • version 2.7.0 • Python 3.9 +
+MIT © TheGreatCodeholio • version 2.7.1 • Python 3.9 +

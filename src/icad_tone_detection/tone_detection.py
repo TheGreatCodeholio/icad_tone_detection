@@ -2,7 +2,6 @@ import json
 import subprocess
 
 from pydub import AudioSegment
-from wheel.macosx_libfile import segment_command_fields_64
 
 def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=2.7):
     two_tone_matches = []

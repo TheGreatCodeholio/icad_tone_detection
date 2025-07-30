@@ -1,7 +1,7 @@
-import importlib
 import platform
 import shutil
 import stat
+from importlib import resources
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Dict
@@ -14,7 +14,7 @@ from .frequency_extraction import FrequencyExtraction
 from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, \
     detect_dtmf_tones
 
-version = 2.6
+__version__ = "2.7.1"
 
 class ToneDetectionResult:
     def __init__(self, two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result):
@@ -168,7 +168,7 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
 
         debug_info = f"""
 ############################################################
-ICAD Tone Detection: DEBUG - v{version}
+ICAD Tone Detection: DEBUG - v{__version__}
 ------------------------------------------------------------
 Decode binary path:        {icad_decode_path}
 Analyzing audio at:        {audio_path}
