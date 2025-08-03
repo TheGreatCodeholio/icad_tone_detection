@@ -14,7 +14,7 @@ from .frequency_extraction import FrequencyExtraction
 from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, \
     detect_dtmf_tones
 
-__version__ = "2.7.1"
+__version__ = "2.7.2"
 
 class ToneDetectionResult:
     def __init__(self, two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result):

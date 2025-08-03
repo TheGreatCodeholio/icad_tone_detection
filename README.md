@@ -163,4 +163,4 @@ Issues and pull-requests are welcome — visit the [GitHub repo](https://github.
 
 ## License
 
-MIT © TheGreatCodeholio • version 2.7.1 • Python 3.9 +
+MIT © TheGreatCodeholio • version 2.7.2 • Python 3.9 +
