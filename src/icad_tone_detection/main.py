@@ -4,56 +4,42 @@ import stat
 from importlib import resources
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import requests
 
 from .audio_loader import load_audio
 from .exceptions import AudioLoadError, FrequencyExtractionError, ToneDetectionError, FFmpegNotFoundError
 from .frequency_extraction import FrequencyExtraction
-from .tone_detection import detect_two_tone, detect_long_tones, detect_warble_tones, detect_mdc_tones, \
-    detect_dtmf_tones
+from .tone_detection import (
+    detect_long_tones,
+    detect_warble_tones,
+    detect_mdc_tones,
+    detect_dtmf_tones,
+    detect_pulsed_single_tone, detect_two_tone_tones,
+)
 
-__version__ = "2.7.2"
+__version__ = "2.8.0"
 
-class ToneDetectionResult:
-    def __init__(self, two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result):
-        self.two_tone_result = two_tone_result
-        self.long_result = long_result
-        self.hi_low_result = hi_low_result
-        self.mdc_result = mdc_result
-        self.dtmf_result = dtmf_result
 
 @dataclass
 class ToneDetectionResult:
     two_tone_result: List[Dict]
     long_result: List[Dict]
     hi_low_result: List[Dict]
+    pulsed_result: List[Dict]
     mdc_result: List[Dict]
     dtmf_result: List[Dict]
+
+
 
 def _path_to_bin(folder: str, binary: str = "icad_decode"):
     return resources.files("icad_tone_detection").joinpath(f"bin/{folder}/{binary}")
 
-def choose_decode_binary() -> Path:
-    """
-    Return a Path (or Traversable) to the correct `icad_decode` binary for the
-    current OS/CPU.
-
-    Supported folders shipped inside the wheel:
-
-        bin/
-          linux_x86_64/  icad_decode
-          linux_arm64/   icad_decode
-          linux_armv7/   icad_decode
-          macos_x86_64/  icad_decode
-          macos_arm64/   icad_decode
-          windows_x86_64/icad_decode.exe
-    """
+def choose_decode_binary() -> str:
     system = platform.system().lower()
     arch   = platform.machine().lower()
 
-    # ---------- Linux -------------------------------------------------
     if system == "linux":
         if arch in ("x86_64", "amd64"):
             folder, binary = "linux_x86_64", "icad_decode"
@@ -65,12 +51,10 @@ def choose_decode_binary() -> Path:
             raise RuntimeError(f"Unsupported Linux architecture: {arch}")
         resource = _path_to_bin(folder, binary)
 
-    # ---------- macOS -------------------------------------------------
     elif system == "darwin":
         folder = "macos_arm64" if arch == "arm64" else "macos_x86_64"
         resource = _path_to_bin(folder, "icad_decode")
 
-    # ---------- Windows ----------------------------------------------
     elif system == "windows":
         if arch not in ("amd64", "x86_64"):
             raise RuntimeError(f"Unsupported Windows architecture: {arch}")
@@ -79,60 +63,255 @@ def choose_decode_binary() -> Path:
     else:
         raise RuntimeError(f"Unsupported platform: {system}/{arch}")
 
-    # Ensure execute bit is set when the file is on disk (no-op inside zip)
+    # Convert to string path for downstream code
+    path_str = str(resource)
+
     if system != "windows":
         try:
-            real_path = Path(resource)            # will work if it's a FilePath
-            real_path.chmod(real_path.stat().st_mode |
-                            stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            p = Path(path_str)
+            p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         except (FileNotFoundError, OSError):
-            # resource might be inside a zip importer; ignore chmod errors
             pass
 
-    return resource
+    return path_str
 
 
-def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_a_min_length=0.85, tone_b_min_length=2.6,
-                hi_low_interval=0.2,
-                hi_low_min_alternations=6, long_tone_min_length=3.8, detect_mdc=True, mdc_high_pass=200, mdc_low_pass=4000, detect_dtmf=True, debug=False):
+def _intervals_from_hits(hits: List[Dict]) -> List[Tuple[float, float]]:
+    """(start,end) list for masking overlaps."""
+    out = []
+    for h in hits:
+        s = float(h.get("start", 0.0))
+        e = float(h.get("end", s))
+        if e > s:
+            out.append((s, e))
+    return out
+
+
+def _outside_intervals(group, intervals: List[Tuple[float, float]]) -> bool:
+    """Return True if (group_start, group_end) does NOT overlap any interval."""
+    gs, ge = float(group[0]), float(group[1])
+    for (s, e) in intervals:
+        if not (ge <= s or gs >= e):
+            return False
+    return True
+
+
+def tone_detect(
+        audio_path,
+        matching_threshold=2.5,
+        time_resolution_ms=50,
+
+        # --- FrequencyExtraction knobs ---
+        fe_freq_band: Tuple[float, float] = (200.0, 3000.0),
+        fe_merge_short_gaps_ms: int = 0,
+        fe_silence_below_global_db: float = -28.0,
+        fe_snr_above_noise_db: float = 6.0,
+
+        # --- Quick Call (two-tone A/B) ---
+        tone_a_min_length=0.85,
+        tone_b_min_length=2.6,
+        two_tone_max_gap_between_a_b=0.35,
+        two_tone_bw_hz=25.0,
+        two_tone_min_pair_separation_hz=40.0,
+
+        # --- Hi/Low (warble) ---
+        hi_low_interval=0.2,
+        hi_low_min_alternations=6,
+        hi_low_tone_bw_hz=25.0,
+        hi_low_min_pair_separation_hz=40.0,
+
+        # --- Long tone ---
+        long_tone_min_length=3.8,
+        long_tone_bw_hz=25.0,
+
+        # --- Pulsed single tone ---
+        pulsed_bw_hz=25.0,
+        pulsed_min_cycles=6,
+        pulsed_min_on_ms=120,
+        pulsed_max_on_ms=900,
+        pulsed_min_off_ms=25,
+        pulsed_max_off_ms=350,
+        pulsed_auto_center_band: Tuple[float, float] = (200.0, 3000.0),
+        pulsed_mode_bin_hz: float = 5.0,
+
+        # --- Enable/disable detectors ---
+        detect_pulsed=True,
+        detect_two_tone=True,
+        detect_long=True,
+        detect_hi_low=True,
+
+        # --- External decoders ---
+        detect_mdc=True,
+        mdc_high_pass=200,
+        mdc_low_pass=4000,
+        detect_dtmf=True,
+
+        debug=False,
+):
     """
-        Loads audio from various sources including local path, URL, BytesIO object, or a PyDub AudioSegment.
+    Detect paging-style tones in an audio file (local path, URL, or in-memory).
 
-        Parameters:
-           - audio_input: Can be a string (path or URL), bytes like object, or AudioSegment.
-           - matching_threshold (float): The percentage threshold used to determine if two frequencies
-                are considered a match. For example, a threshold of 2 means that two frequencies are considered matching
-                if they are within x% of each other. Default 2.5%
-           - time_resolution_ms (int): The time resolution in milliseconds for the STFT. Default is 50ms.
-           - tone_a_min_length (float): The minimum length in seconds of an A tone for two tone detections. Default 0.85 Seconds
-           - tone_b_min_length (float): The minimum length in seconds of a B tone for two tone detections. Default 2.8 Seconds
-           - long_tone_min_length (float): The minimum length a long tone needs to be to consider it a match. Default 3.8 Seconds
-           - hi_low_interval (float): The maximum allowed interval in seconds between two consecutive alternating tones. Default is 0.2 Seconds
-           - hi_low_min_alternations (int): The minimum number of alternations for a hi-low warble tone sequence to be considered valid. Default 6
-           - detect_mdc (bool): detect MDC/FleetSync
-           - mdc_high_pass (int): The high pass filter for detecting MDC/FleetSync
-           - mdc_low_pass (int): The low pass filter for detecting MDC/FleetSync
-           - detect_dtmf (bool): detect DTMF
-           - debug (bool): If debug is enabled, print all tones found in audio file. Default is False
+    This function runs a Short-Time Fourier Transform (STFT) frontend to extract per-frame
+    dominant frequencies, then applies several pattern recognizers:
 
-        Returns:
-           - An instance of ToneDetectionResult containing information about the found tones in the audio.
+      • Pulsed single tone (ON/OFF/ON around an inferred center)
+      • Two-tone “Quick Call” A→B (A is short, B is longer)
+      • Long single tone
+      • Hi–Low warble (alternating two distinct tones)
+      • Optional external decoders: MDC1200/FleetSync, DTMF
 
-        Raises:
-            ValueError: If the input type is unsupported, empty, or audio decoding fails.
-            FileNotFoundError: If the specified file path does not exist.
-            requests.RequestException: If the audio URL cannot be fetched.
-            FrequencyExtractionError: If the frequency extractor can not extract the tone data.
-            ToneDetectError: If there is an error running icad_decode for DTMF or MDC tones.
-            RuntimeError: If FFmpeg processing fails or a general processing error occurs.
-        """
+    The pulsed detector (if enabled) runs first and masks its time windows so the other
+    detectors don’t double-count the same energy.
+
+    Parameters
+    ----------
+    audio_path : str | bytes | io.BytesIO | pydub.AudioSegment
+        Path/URL/bytes-like object for audio readable by FFmpeg. Multi-channel audio is mixed to mono.
+
+    matching_threshold : float, default 2.5
+        Percentage tolerance used when grouping adjacent STFT frames into a continuous frequency group.
+        Higher allows more drift before a new group is started.
+
+    time_resolution_ms : int, default 50
+        Hop size (and effective time resolution) of the STFT, in milliseconds. Smaller → finer time
+        resolution but potentially noisier frequency estimates.
+
+    # ----- Frequency-extraction (frontend) knobs -----
+    fe_freq_band : (float, float), default (200.0, 3000.0)
+        [Hz] Band to search for dominant peaks. Frames outside are ignored for peak-picking.
+
+    fe_merge_short_gaps_ms : int, default 0
+        Merge adjacent groups separated by ≤ this gap (ms). Helps when a single missing frame
+        would otherwise split one logical tone into two groups.
+
+    fe_silence_below_global_db : float, default -28.0
+        A frame is considered OFF if its peak is this many dB below the file’s global peak.
+
+    fe_snr_above_noise_db : float, default 6.0
+        Additionally require the frame to be at least this many dB above a simple noise-floor estimate.
+
+    # ----- Two-tone (Quick Call) -----
+    tone_a_min_length : float, default 0.85
+        Minimum duration (seconds) of the A tone.
+
+    tone_b_min_length : float, default 2.6
+        Minimum duration (seconds) of the B tone.
+
+    two_tone_max_gap_between_a_b : float, default 0.35
+        Maximum allowed gap (seconds) between the end of A and start of B.
+
+    two_tone_bw_hz : float, default 25.0
+        [Hz] Intra-group stability band used to accept A/B groups.
+
+    two_tone_min_pair_separation_hz : float, default 40.0
+        [Hz] Minimum frequency separation between A and B to consider them distinct.
+
+    # ----- Hi/Low warble -----
+    hi_low_interval : float, default 0.2
+        Maximum allowed gap (seconds) between alternating hi/low groups when assembling a sequence.
+
+    hi_low_min_alternations : int, default 6
+        Minimum number of alternating groups (hi,low,hi,low, …) to report a warble.
+
+    hi_low_tone_bw_hz : float, default 25.0
+        [Hz] Intra-group stability band used to accept warble groups.
+
+    hi_low_min_pair_separation_hz : float, default 40.0
+        [Hz] Minimum separation between the two alternating tones.
+
+    # ----- Long tone -----
+    long_tone_min_length : float, default 3.8
+        Minimum duration (seconds) of a stable, single-frequency long tone.
+
+    long_tone_bw_hz : float, default 25.0
+        [Hz] Intra-group stability band used to accept long-tone groups.
+
+    # ----- Pulsed single tone (auto-centered) -----
+    pulsed_bw_hz : float, default 25.0
+        [Hz] Allowed deviation around the inferred center for a frame to count as ON.
+
+    pulsed_min_cycles : int, default 6
+        Minimum number of ON→OFF repetitions required to report a hit.
+
+    pulsed_min_on_ms : int, default 120
+    pulsed_max_on_ms : int, default 900
+        Bounds (milliseconds) for each ON pulse duration.
+
+    pulsed_min_off_ms : int, default 25
+    pulsed_max_off_ms : int, default 350
+        Bounds (milliseconds) for the OFF gaps between pulses.
+
+    pulsed_auto_center_band : (float, float), default (200.0, 3000.0)
+        [Hz] Frequency band to search when auto-estimating the pulsed tone’s center.
+
+    pulsed_mode_bin_hz : float, default 5.0
+        [Hz] Histogram bin width used in robust mode selection for the auto-centered frequency.
+
+    # ----- Enable/disable detectors -----
+    detect_pulsed : bool, default True
+        Enable/disable pulsed single-tone detection.
+
+    detect_two_tone : bool, default True
+        Enable/disable two-tone (Quick Call) detection.
+
+    detect_long : bool, default True
+        Enable/disable long tone detection.
+
+    detect_hi_low : bool, default True
+        Enable/disable hi–low warble detection.
+
+    # ----- External decoders -----
+    detect_mdc : bool, default True
+        Enable/disable MDC1200/FleetSync decoder (external binary).
+
+    mdc_high_pass : int, default 200
+    mdc_low_pass  : int, default 4000
+        [Hz] Optional prefilters applied before MDC/FleetSync decode.
+
+    detect_dtmf : bool, default True
+        Enable/disable DTMF decoder (external binary).
+
+    debug : bool, default False
+        If True, print a detailed dump of grouped frequencies and a summary of detections.
+
+    Returns
+    -------
+    ToneDetectionResult
+        Dataclass with fields:
+          • pulsed_result : list[dict]
+          • two_tone_result : list[dict]
+          • long_result : list[dict]
+          • hi_low_result : list[dict]
+          • mdc_result : list[dict]
+          • dtmf_result : list[dict]
+
+    Raises
+    ------
+    FFmpegNotFoundError
+        FFmpeg is missing from PATH.
+    AudioLoadError
+        The audio cannot be loaded or decoded.
+    FrequencyExtractionError
+        STFT processing or grouping failed.
+    ToneDetectionError
+        External decoders (MDC/DTMF) failed.
+
+    Notes
+    -----
+    • For best results, use sample rates ≥ 16 kHz and avoid heavy compression.
+    • `time_resolution_ms` should be compatible with the shortest cadence you want to detect
+      (very short pulses often benefit from 25 ms).
+    • The pulsed detector auto-centers within `pulsed_auto_center_band`; no fixed center is required.
+    """
+
+
     if shutil.which("ffmpeg") is None:
         raise FFmpegNotFoundError(
             "FFmpeg is not installed or not found in system PATH. Please install FFmpeg to use this module."
         )
     icad_decode_path = choose_decode_binary()
 
-
+    # ---- Load audio ----
     try:
         audio_segment, samples, frame_rate, duration_seconds = load_audio(audio_path)
     except ValueError as ve:
@@ -146,16 +325,24 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
     except Exception as e:
         raise AudioLoadError(f"Unknown error: {type(e).__name__}: {e}") from e
 
+    # ---- Extract per-frame dominant frequencies ----
     try:
-        matched_frequencies = FrequencyExtraction(samples, frame_rate, duration_seconds, matching_threshold, time_resolution_ms).get_audio_frequencies()
+        matched_frequencies = FrequencyExtraction(
+            samples, frame_rate, duration_seconds,
+            matching_threshold, time_resolution_ms,
+            fe_freq_band=fe_freq_band,
+            fe_merge_short_gaps_ms=fe_merge_short_gaps_ms,
+            fe_silence_below_global_db=fe_silence_below_global_db,
+            fe_snr_above_noise_db=fe_snr_above_noise_db,
+        ).get_audio_frequencies()
     except Exception as e:
         raise FrequencyExtractionError(f"Frequency extraction failed on {audio_path}: {e}") from e
 
-    if debug is True:
+    # ---- Debug dump of matched groups ----
+    if debug:
         if matched_frequencies:
             freq_lines = []
             for idx, (start, end, length, freq_list) in enumerate(matched_frequencies, start=1):
-                # Convert freq_list to a simple string; optionally truncate if extremely large
                 freq_str = ", ".join(str(freq) for freq in freq_list)
                 freq_lines.append(
                     f"  {idx:2d}) Start={start:.2f}s | End={end:.2f}s | Dur={length:.2f}s\n"
@@ -164,7 +351,6 @@ def tone_detect(audio_path, matching_threshold=2.5, time_resolution_ms=50, tone_
             freq_summary = "\n".join(freq_lines)
         else:
             freq_summary = "  None"
-
 
         debug_info = f"""
 ############################################################
@@ -180,6 +366,17 @@ Tone B Min Length (s):     {tone_b_min_length}
 Long Tone Min Length (s):  {long_tone_min_length}
 Hi-Low Interval (s):       {hi_low_interval}
 Hi-Low Min Alternations:   {hi_low_min_alternations}
+
+Detect Pulsed:             {detect_pulsed}
+  Pulsed BW (Hz):          {pulsed_bw_hz}
+  Pulsed Min Cycles:       {pulsed_min_cycles}
+  Pulsed ON range (ms):    {pulsed_min_on_ms}..{pulsed_max_on_ms}
+  Pulsed OFF range (ms):   {pulsed_min_off_ms}..{pulsed_max_off_ms}
+
+Detect Two-Tone:           {detect_two_tone}
+Detect Long Tone:          {detect_long}
+Detect Hi-Low Warble:      {detect_hi_low}
+
 Detect MDC/FleetSync:      {detect_mdc}
   MDC High Pass (Hz):      {mdc_high_pass}
   MDC Low Pass (Hz):       {mdc_low_pass}
@@ -194,10 +391,65 @@ Matched Frequencies ({len(matched_frequencies)} groups):
 """
         print(debug_info)
 
-    two_tone_result = detect_two_tone(matched_frequencies, tone_a_min_length, tone_b_min_length)
-    long_result = detect_long_tones(matched_frequencies, two_tone_result, long_tone_min_length)
-    hi_low_result = detect_warble_tones(matched_frequencies, hi_low_interval, hi_low_min_alternations)
-    # MDC detection (can raise RuntimeError or ValueError)
+    # ---- 1) Pulsed single tone FIRST (e.g., 1007/0/1007/0) ----
+    if detect_pulsed:
+        pulsed_result = detect_pulsed_single_tone(
+            matched_frequencies,
+            bw_hz=pulsed_bw_hz,
+            min_cycles=pulsed_min_cycles,
+            min_on_ms=pulsed_min_on_ms,
+            max_on_ms=pulsed_max_on_ms,
+            min_off_ms=pulsed_min_off_ms,
+            max_off_ms=pulsed_max_off_ms,
+            time_resolution_ms=time_resolution_ms,
+            auto_center_band=pulsed_auto_center_band,
+            mode_bin_hz=pulsed_mode_bin_hz,
+        )
+        pulsed_windows = _intervals_from_hits(pulsed_result)
+    else:
+        pulsed_result = []
+        pulsed_windows = []
+
+    # Filter out pulsed time windows from other detectors to avoid overlaps
+    filtered_for_others = (
+        [g for g in matched_frequencies if _outside_intervals(g, pulsed_windows)]
+        if detect_pulsed else matched_frequencies
+    )
+
+    # ---- 2) Two-tone (A/B), Long, Warble on filtered groups ----
+    if detect_two_tone:
+        two_tone_result = detect_two_tone_tones(
+            filtered_for_others,
+            min_tone_a_length=tone_a_min_length,
+            min_tone_b_length=tone_b_min_length,
+            max_gap_between_a_b=two_tone_max_gap_between_a_b,
+            tone_bw_hz=two_tone_bw_hz,
+            min_pair_separation_hz=two_tone_min_pair_separation_hz,
+        )
+    else:
+        two_tone_result = []
+
+    if detect_long:
+        long_result = detect_long_tones(
+            filtered_for_others, two_tone_result,
+            min_duration=long_tone_min_length,
+            tone_bw_hz=long_tone_bw_hz,
+        )
+    else:
+        long_result = []
+
+    if detect_hi_low:
+        hi_low_result = detect_warble_tones(
+            filtered_for_others,
+            interval_length=hi_low_interval,
+            min_alternations=hi_low_min_alternations,
+            tone_bw_hz=hi_low_tone_bw_hz,
+            min_pair_separation_hz=hi_low_min_pair_separation_hz,
+        )
+    else:
+        hi_low_result = []
+
+    # ---- 3) MDC / DTMF (raw audio) ----
     if detect_mdc:
         try:
             mdc_result = detect_mdc_tones(
@@ -211,7 +463,6 @@ Matched Frequencies ({len(matched_frequencies)} groups):
     else:
         mdc_result = []
 
-    # DTMF detection (can raise RuntimeError or ValueError)
     if detect_dtmf:
         try:
             dtmf_result = detect_dtmf_tones(
@@ -231,10 +482,18 @@ DETECTION SUMMARY
 Two-Tone (Quick Call): {len(two_tone_result)}
 Long Tones:            {len(long_result)}
 Hi-Low Warble:         {len(hi_low_result)}
+Pulsed Single Tone:    {len(pulsed_result)}
 MDC1200/FleetSync:     {len(mdc_result)}
 DTMF:                  {len(dtmf_result)}
 ------------------------------------------------------------
 """
         print(summary_info)
 
-    return ToneDetectionResult(two_tone_result, long_result, hi_low_result, mdc_result, dtmf_result)
+    return ToneDetectionResult(
+        two_tone_result=two_tone_result,
+        long_result=long_result,
+        hi_low_result=hi_low_result,
+        pulsed_result=pulsed_result,
+        mdc_result=mdc_result,
+        dtmf_result=dtmf_result
+    )

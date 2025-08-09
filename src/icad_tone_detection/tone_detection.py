@@ -1,72 +1,142 @@
 import json
 import subprocess
+import statistics
+from typing import List, Optional, Tuple, Dict, Any
+from collections import Counter, defaultdict
 
+import numpy as np
 from pydub import AudioSegment
 
-def detect_two_tone(frequency_matches, min_tone_a_length=0.7, min_tone_b_length=2.7):
+
+def group_center(freq_group):
+    """Return a robust center freq (median of non-zero samples) for a group tuple (s,e,len,freqs)."""
+    freqs = [f for f in freq_group[3] if f > 0]
+    return statistics.median(freqs) if freqs else 0.0
+
+def group_is_stable(freq_group, bw_hz=25.0):
+    """Ensure the group's instantaneous freq doesn't wander too much (reduces false matches)."""
+    freqs = [f for f in freq_group[3] if f > 0]
+    if len(freqs) < 2:
+        return False
+    med = statistics.median(freqs)
+    return all(abs(f - med) <= bw_hz for f in freqs)
+
+def separated_enough(f1, f2, min_separation_hz=40.0):
+    """Two tones must be meaningfully distinct (not tiny drift of same tone)."""
+    if f1 <= 0 or f2 <= 0:
+        return False
+    return abs(f1 - f2) >= min_separation_hz
+
+def _robust_mode(vals: List[float], bin_size: float = 5.0) -> float:
+    """Histogram-ish mode, robust to outliers."""
+    from collections import Counter
+    if not vals:
+        return 0.0
+    bins = Counter(int(v // bin_size) for v in vals)
+    top_bin = max(bins.items(), key=lambda kv: kv[1])[0]
+    in_bin = [v for v in vals if int(v // bin_size) == top_bin]
+    return float(statistics.median(in_bin)) if in_bin else float(statistics.median(vals))
+
+def detect_two_tone_tones(
+        frequency_matches,
+        min_tone_a_length=0.7,
+        min_tone_b_length=2.7,
+        max_gap_between_a_b=0.35,      # NEW: keep A→B contiguous-ish
+        tone_bw_hz=25.0,               # NEW: intra-group stability band
+        min_pair_separation_hz=40.0    # NEW: ensure A and B are truly different
+):
+
+    if min_tone_a_length <= 0:
+        raise ValueError("min_tone_a_length must be > 0")
+    if min_tone_b_length <= 0:
+        raise ValueError("min_tone_b_length must be > 0")
+    if max_gap_between_a_b < 0:
+        raise ValueError("max_gap_between_a_b must be >= 0")
+    if tone_bw_hz <= 0:
+        raise ValueError("tone_bw_hz must be > 0")
+    if min_pair_separation_hz <= 0:
+        raise ValueError("min_pair_separation_hz must be > 0")
+
     two_tone_matches = []
     tone_id = 0
-    last_set = None
-    if not frequency_matches or len(frequency_matches) < 1:
+    last = None
+
+    if not frequency_matches:
         return two_tone_matches
 
-    for current_set in frequency_matches:
-        if all(f > 0 for f in current_set[3]):  # Ensure frequencies are non-zero
-            current_duration = current_set[1] - current_set[0]  # Calculate the duration of the current tone
+    for cur in frequency_matches:
+        # Must be non-zero group and stable
+        if not cur[3] or cur[3][0] <= 0 or not group_is_stable(cur, bw_hz=tone_bw_hz):
+            continue
 
-            if last_set is None:
-                last_set = current_set
-            else:
-                last_duration = last_set[1] - last_set[0]  # Calculate the duration of the last tone
-                # Check if the last tone is a valid A tone and the current is a valid B tone
-                if last_duration >= min_tone_a_length and current_duration >= min_tone_b_length:
-                    tone_data = {
-                        "tone_id": f'qc_{tone_id + 1}',
-                        "detected": [last_set[3][0], current_set[3][0]],  # Frequency values of A and B tones
-                        "tone_a_length": last_set[2],
-                        "tone_b_length": current_set[2],
-                        "start": last_set[0],  # Start time of tone A
-                        "end": current_set[1]  # End time of tone B
-                    }
-                    tone_id += 1
-                    two_tone_matches.append(tone_data)
-                # Update last_set to current_set for next iteration
-                last_set = current_set
+        cur_dur = cur[1] - cur[0]
+        if last is None:
+            # cache only if stable and non-zero
+            last = cur if cur_dur >= min_tone_a_length else None
+            continue
+
+        # last must be stable, non-zero
+        if not last[3] or last[3][0] <= 0 or not group_is_stable(last, bw_hz=tone_bw_hz):
+            last = cur if cur_dur >= min_tone_a_length else None
+            continue
+
+        last_dur = last[1] - last[0]
+        gap = max(0.0, cur[0] - last[1])
+        fa = group_center(last)
+        fb = group_center(cur)
+
+        if (last_dur >= min_tone_a_length and
+                cur_dur  >= min_tone_b_length and
+                gap <= max_gap_between_a_b and
+                separated_enough(fa, fb, min_pair_separation_hz)):
+
+            tone_id += 1
+            two_tone_matches.append({
+                "tone_id": f'qc_{tone_id}',
+                "detected": [round(fa,1), round(fb,1)],
+                "tone_a_length": round(last[2], 3),
+                "tone_b_length": round(cur[2], 3),
+                "start": last[0],
+                "end": cur[1]
+            })
+            # reset; avoid overlapping chains (optional)
+            last = None
+        else:
+            # move window: current can become next A if long enough
+            last = cur if cur_dur >= min_tone_a_length else None
 
     return two_tone_matches
 
 
-def detect_long_tones(frequency_matches, detected_quickcall, min_duration=2.0):
+def detect_long_tones(frequency_matches, detected_quickcall, min_duration=2.0, tone_bw_hz=25.0):
+    if min_duration <= 0:
+        raise ValueError("min_duration must be > 0")
+    if tone_bw_hz <= 0:
+        raise ValueError("tone_bw_hz must be > 0")
+
     if not frequency_matches:
         return []
 
     long_tone_matches = []
-    excluded_frequencies = set([0.0])  # Initializing with 0.0 Hz to exclude it
+    excluded = set([0.0])
 
-    # Add detected quick call tones to the excluded list
-    for quickcall in detected_quickcall:
-        excluded_frequencies.update(quickcall["detected"][:2])
+    for qc in detected_quickcall:
+        excluded.update(qc["detected"][:2])
 
-    for start, end, duration, frequencies in frequency_matches:
-        if not frequencies:
+    for start, end, duration, freqs in frequency_matches:
+        if not freqs:
             continue
-
-        current_frequency = frequencies[0]
-
-        # Skip the loop iteration if the current frequency is in the excluded frequencies
-        if current_frequency in excluded_frequencies or current_frequency <= 500:
+        f0 = freqs[0]
+        if f0 in excluded or f0 <= 500:
             continue
-
-        # Check if the duration meets the minimum requirement
-        if duration >= min_duration:
-            tone_data = {
+        if duration >= min_duration and group_is_stable((start, end, duration, freqs), bw_hz=tone_bw_hz):
+            long_tone_matches.append({
                 "tone_id": f"lt_{len(long_tone_matches) + 1}",
-                "detected": current_frequency,
+                "detected": round(group_center((start, end, duration, freqs)), 1),
                 "start": start,
                 "end": end,
                 "length": duration
-            }
-            long_tone_matches.append(tone_data)
+            })
 
     return long_tone_matches
 
@@ -87,79 +157,269 @@ def within_tolerance(frequency1, frequency2, tolerance=0.02):
         return False
     return abs(frequency1 - frequency2) / frequency1 <= tolerance
 
-
-def detect_warble_tones(frequency_matches, interval_length, min_alternations):
+def detect_pulsed_single_tone(
+        frequency_matches: List[Tuple[float, float, float, List[float]]],
+        *,
+        bw_hz: float = 25.0,               # ±Hz counted as ON around the inferred center
+        min_cycles: int = 6,               # required ON→OFF repetitions
+        min_on_ms: int = 120,              # ON duration bounds (ms)
+        max_on_ms: int = 900,
+        min_off_ms: int = 25,              # OFF duration bounds (ms)
+        max_off_ms: int = 350,
+        time_resolution_ms: int = 50,      # must match your STFT hop
+        auto_center_band: Tuple[float, float] = (200.0, 3000.0),  # where to search for center
+        mode_bin_hz: float = 5.0           # histogram bin for robust mode
+) -> List[Dict[str, Any]]:
     """
-    Extract sequences of alternating warble tones from a list of frequency matches.
+    Detect pulsed single-tone patterns like ON/OFF/ON/OFF around an inferred center frequency.
 
-    Parameters:
-    - frequency_matches: A list of tuples, each containing start time, end time, and a list of frequencies.
-    - interval_length: The maximum allowed interval in seconds between consecutive tones.
-    - min_alternations: The minimum number of alternations for a sequence to be considered valid.
-
-    Returns:
-    - A list of dictionaries, each representing a detected sequence of warble tones with its details.
+    Returns list of dicts shaped like other detectors:
+      {
+        "tone_id": "pl_1",
+        "detected": 1010.1,   # inferred center (Hz)
+        "start": 2.31,
+        "end": 5.12,
+        "length": 2.81,
+        "cycles": 8,
+        "on_ms_median": 180,
+        "off_ms_median": 95
+      }
     """
+    if bw_hz <= 0:
+        raise ValueError("bw_hz must be > 0")
+    if mode_bin_hz <= 0:
+        raise ValueError("mode_bin_hz must be > 0")
+    if min_on_ms > max_on_ms:
+        raise ValueError("min_on_ms must be <= max_on_ms")
+    if min_off_ms > max_off_ms:
+        raise ValueError("min_off_ms must be <= max_off_ms")
+    lo, hi = auto_center_band
+    if not (lo < hi):
+        raise ValueError("auto_center_band must be (low < high)")
+
     if not frequency_matches:
         return []
+
+    # ---- Build fixed-step timeline (t, f_center_per_group) ----
+    step = time_resolution_ms / 1000.0
+    timeline: List[Tuple[float, float]] = []
+    for start, end, dur, freqs in frequency_matches:
+        # center per group; 0 if OFF/noisy
+        nz = [f for f in freqs if lo <= f <= hi]
+        f = float(statistics.median(nz)) if len(nz) else 0.0
+        t = start
+        while t < end - 1e-12:
+            timeline.append((round(t, 3), f))
+            t += step
+    if not timeline:
+        return []
+
+    # ---- Auto-estimate center from "pulse-like" ON groups first (weighted by duration) ----
+    on_min_s = min_on_ms / 1000.0
+    on_max_s = max_on_ms / 1000.0
+    weighted_bins = defaultdict(float)
+
+    def stable_med(freqs: List[float], med: float) -> bool:
+        return all(abs(f - med) <= bw_hz for f in freqs if f > 0)
+
+    for (gs, ge, gd, freqs) in frequency_matches:
+        if gd < on_min_s or gd > on_max_s:
+            continue
+        nz = [f for f in freqs if lo <= f <= hi]
+        if len(nz) < 2:
+            continue
+        med = statistics.median(nz)
+        if stable_med(nz, med):
+            weighted_bins[int(med // mode_bin_hz)] += gd
+
+    if weighted_bins:
+        top_bin = max(weighted_bins.items(), key=lambda kv: kv[1])[0]
+        center_candidates = []
+        for (gs, ge, gd, freqs) in frequency_matches:
+            nz = [f for f in freqs if lo <= f <= hi]
+            if not nz:
+                continue
+            med = statistics.median(nz)
+            if int(med // mode_bin_hz) == top_bin:
+                center_candidates.append(med)
+        center_hz = float(np.median(center_candidates))
+    else:
+        # Fallback: use modal bin from all timeline frames within band
+        vals = [f for (_t, f) in timeline if lo <= f <= hi]
+        if not vals:
+            return []
+        b = Counter(int(v // mode_bin_hz) for v in vals)
+        top = max(b.items(), key=lambda kv: kv[1])[0]
+        center_hz = float(np.median([v for v in vals if int(v // mode_bin_hz) == top]))
+
+    def in_band(f: float) -> bool:
+        return (f > 0.0) and (abs(f - center_hz) <= bw_hz)
+
+    # ---- Build ON/OFF runs ----
+    runs: List[Tuple[str, float, float]] = []
+    cur_state: Optional[str] = None
+    cur_start: Optional[float] = None
+
+    for (t, f) in timeline:
+        st = "on" if in_band(f) else "off"
+        if cur_state is None:
+            cur_state, cur_start = st, t
+        elif st != cur_state:
+            runs.append((cur_state, cur_start, t))
+            cur_state, cur_start = st, t
+    if cur_state is not None and cur_start is not None:
+        runs.append((cur_state, cur_start, timeline[-1][0] + step))
+
+    if len(runs) < 2:
+        return []
+
+    # ---- Scan for alternating cycles within cadence bounds ----
+    hits: List[Dict[str, Any]] = []
+    i, pl_id = 0, 1
+
+    while i + 1 < len(runs):
+        if runs[i][0] != "on":
+            i += 1
+            continue
+
+        j = i
+        cycles = 0
+        on_ms_list: List[int] = []
+        off_ms_list: List[int] = []
+
+        while j + 1 < len(runs):
+            on_run = runs[j]
+            if on_run[0] != "on":
+                break
+
+            on_len_ms = int(round((on_run[2] - on_run[1]) * 1000))
+            if not (min_on_ms <= on_len_ms <= max_on_ms):
+                break
+            on_ms_list.append(on_len_ms)
+
+            if j + 1 >= len(runs):
+                j += 1
+                break
+
+            off_run = runs[j + 1]
+            if off_run[0] != "off":
+                break
+
+            off_len_ms = int(round((off_run[2] - off_run[1]) * 1000))
+            if not (min_off_ms <= off_len_ms <= max_off_ms):
+                j += 1
+                break
+
+            off_ms_list.append(off_len_ms)
+            cycles += 1
+            j += 2
+
+        if cycles >= min_cycles:
+            end_idx = max(i, j - 1) if j - 1 < len(runs) else i
+            s = round(runs[i][1], 2)
+            e = round(runs[end_idx][2], 2)
+            hits.append({
+                "tone_id": f"pl_{pl_id}",
+                "detected": round(center_hz, 1),
+                "start": s,
+                "end": e,
+                "length": round(e - s, 2),
+                "cycles": cycles,
+                "on_ms_median": int(np.median(on_ms_list)) if on_ms_list else 0,
+                "off_ms_median": int(np.median(off_ms_list)) if off_ms_list else 0,
+            })
+            pl_id += 1
+            i = max(j, i + 1)
+        else:
+            i += 1
+
+    return hits
+
+def detect_warble_tones(
+        frequency_matches,
+        interval_length,
+        min_alternations,
+        tone_bw_hz=25.0,
+        min_pair_separation_hz=40.0
+):
+
+    if interval_length < 0:
+        raise ValueError("interval_length must be >= 0")
+    if min_alternations < 2:
+        raise ValueError("min_alternations must be >= 2")
+    if tone_bw_hz <= 0:
+        raise ValueError("tone_bw_hz must be > 0")
+    if min_pair_separation_hz <= 0:
+        raise ValueError("min_pair_separation_hz must be > 0")
+
+    if not frequency_matches:
+        return []
+
     sequences = []
     id_index = 1
-
     i = 0
+
     while i < len(frequency_matches):
         current_sequence = []
-        current_tones = []
+        current_tones = []  # unique tones we allow to alternate
 
         while i < len(frequency_matches):
             group = frequency_matches[i]
-            if not group[3] or group[3][0] <= 0 or len(group[3]) < 2:
-                i += 1
-                continue
-
-            freq = group[3][0]
-
-            if not current_sequence:
-                # Start a new sequence with the current group
-                current_sequence.append(group)
-                current_tones.append(freq)
-            else:
-                last_group = current_sequence[-1]
-                last_freq = last_group[3][0]
-
-                # Check that the new frequency alternates with the previous one
-                # and it's within the time interval limit
-                if freq != last_freq and group[0] - last_group[1] <= interval_length:
-                    if len(current_tones) < 2:
-                        # If we have less than 2 tones, add the new tone
-                        current_tones.append(freq)
-                    if freq in current_tones:
-                        # Add to sequence if it continues the alternation pattern
-                        current_sequence.append(group)
-                    else:
-                        # Break the sequence if a new, third tone is introduced
-                        break
-                else:
-                    # Break the sequence if the same frequency repeats or interval exceeded
-                    break
-
             i += 1
 
-        # Check if the current sequence is valid before proceeding
-        if len(current_sequence) >= min_alternations:
-            if len(current_tones) == 2:  # Ensure exactly two tones are alternating
-                sequences.append({
-                    "tone_id": f"hl_{id_index}",
-                    "detected": list(current_tones),
-                    "start": current_sequence[0][0],
-                    "end": current_sequence[-1][1],
-                    "length": round(current_sequence[-1][1] - current_sequence[0][0], 2),
-                    "alternations": len(current_sequence)
-                })
-                id_index += 1
+            # Must be non-zero, have ≥2 samples, and be stable
+            if not group[3] or group[3][0] <= 0 or len(group[3]) < 2:
+                break
+            if not group_is_stable(group, bw_hz=tone_bw_hz):
+                break
 
-        # Move to the next possible sequence start
-        if i < len(frequency_matches) and not current_sequence:
-            i += 1  # Increment only if no sequence was started to avoid getting stuck
+            freq = round(group_center(group), 1)
+            if freq <= 0:
+                break
+
+            if not current_sequence:
+                # start sequence
+                current_sequence.append(group)
+                current_tones.append(freq)
+                continue
+
+            last_group = current_sequence[-1]
+            last_freq = round(group_center(last_group), 1)
+            gap_ok = (group[0] - last_group[1]) <= interval_length
+
+            if not gap_ok:
+                break
+
+            if freq == last_freq:
+                # need alternation, not repeats
+                break
+
+            # Add second tone if we only have one so far, ensuring separation
+            if len(current_tones) < 2:
+                if separated_enough(current_tones[0], freq, min_pair_separation_hz):
+                    current_tones.append(freq)
+                else:
+                    # too close; not a real alternation
+                    break
+
+            # From now on, freq must be one of the two known tones
+            if freq not in current_tones:
+                # third unique tone → stop
+                break
+
+            current_sequence.append(group)
+
+        # Validate
+        if len(current_sequence) >= min_alternations and len(current_tones) == 2:
+            sequences.append({
+                "tone_id": f"hl_{id_index}",
+                "detected": sorted([round(current_tones[0],1), round(current_tones[1],1)]),
+                "start": current_sequence[0][0],
+                "end": current_sequence[-1][1],
+                "length": round(current_sequence[-1][1] - current_sequence[0][0], 2),
+                "alternations": len(current_sequence)
+            })
+            id_index += 1
 
     return sequences
 
@@ -183,6 +443,13 @@ def detect_mdc_tones(
     :raises ValueError:         If the audio segment is empty or too short to process.
     :raises RuntimeError:       If 'icad_decode' fails to run properly or returns a nonzero exit code.
     """
+
+    if highpass_freq < 0 or lowpass_freq < 0:
+        raise ValueError("highpass_freq and lowpass_freq must be >= 0")
+    if 0 < lowpass_freq <= highpass_freq:
+        raise ValueError("lowpass_freq must be > highpass_freq (or set either to 0 to disable)")
+    if not isinstance(binary_path, str) or not binary_path:
+        raise ValueError("binary_path must be a non-empty string")
 
     mdc_matches = []
 
@@ -269,6 +536,13 @@ def detect_dtmf_tones(
     :raises RuntimeError: if the decode process fails or returns non-zero.
     :raises ValueError: if the segment is empty.
     """
+
+    if highpass_freq < 0 or lowpass_freq < 0:
+        raise ValueError("highpass_freq and lowpass_freq must be >= 0")
+    if 0 < lowpass_freq <= highpass_freq:
+        raise ValueError("lowpass_freq must be > highpass_freq (or set either to 0 to disable)")
+    if not isinstance(binary_path, str) or not binary_path:
+        raise ValueError("binary_path must be a non-empty string")
 
     dtmf_matches = []
 
