@@ -336,82 +336,73 @@ def detect_warble_tones(
         tone_bw_hz=25.0,
         min_pair_separation_hz=40.0
 ):
+    if interval_length < 0: raise ValueError("interval_length must be >= 0")
+    if min_alternations < 2: raise ValueError("min_alternations must be >= 2")
+    if tone_bw_hz <= 0: raise ValueError("tone_bw_hz must be > 0")
+    if min_pair_separation_hz <= 0: raise ValueError("min_pair_separation_hz must be > 0")
+    if not frequency_matches: return []
 
-    if interval_length < 0:
-        raise ValueError("interval_length must be >= 0")
-    if min_alternations < 2:
-        raise ValueError("min_alternations must be >= 2")
-    if tone_bw_hz <= 0:
-        raise ValueError("tone_bw_hz must be > 0")
-    if min_pair_separation_hz <= 0:
-        raise ValueError("min_pair_separation_hz must be > 0")
-
-    if not frequency_matches:
-        return []
-
-    sequences = []
-    id_index = 1
+    def close(a, b, tol): return abs(a - b) <= tol
+    sequences, id_index = [], 1
     i = 0
 
     while i < len(frequency_matches):
         current_sequence = []
-        current_tones = []  # unique tones we allow to alternate
+        current_tones = []  # the two tones we allow, stored as floats (not rounded)
+        i0 = i
 
         while i < len(frequency_matches):
-            group = frequency_matches[i]
-            i += 1
+            g = frequency_matches[i]; i += 1
+            # needs non-zero, ≥2 samples, stable
+            if not g[3] or g[3][0] <= 0 or len(g[3]) < 2: break
+            if not group_is_stable(g, bw_hz=tone_bw_hz): break
 
-            # Must be non-zero, have ≥2 samples, and be stable
-            if not group[3] or group[3][0] <= 0 or len(group[3]) < 2:
-                break
-            if not group_is_stable(group, bw_hz=tone_bw_hz):
-                break
-
-            freq = round(group_center(group), 1)
-            if freq <= 0:
-                break
-
+            f = group_center(g)  # keep raw center; round only for reporting
             if not current_sequence:
-                # start sequence
-                current_sequence.append(group)
-                current_tones.append(freq)
+                current_sequence.append(g)
+                current_tones = [f]
                 continue
 
-            last_group = current_sequence[-1]
-            last_freq = round(group_center(last_group), 1)
-            gap_ok = (group[0] - last_group[1]) <= interval_length
+            last = current_sequence[-1]
+            gap_ok = (g[0] - last[1]) <= (interval_length + 1e-6)
+            if not gap_ok: break
 
-            if not gap_ok:
+            f_last = group_center(last)
+            # Need alternation: reject repeats within tolerance
+            if close(f, f_last, tone_bw_hz):
                 break
 
-            if freq == last_freq:
-                # need alternation, not repeats
-                break
-
-            # Add second tone if we only have one so far, ensuring separation
+            # Add second tone if we only have one so far
             if len(current_tones) < 2:
-                if separated_enough(current_tones[0], freq, min_pair_separation_hz):
-                    current_tones.append(freq)
+                if separated_enough(current_tones[0], f, min_pair_separation_hz):
+                    current_tones.append(f)
                 else:
-                    # too close; not a real alternation
                     break
 
-            # From now on, freq must be one of the two known tones
-            if freq not in current_tones:
-                # third unique tone → stop
+            # From now on, f must be close to one of the two tones
+            if not any(close(f, ct, tone_bw_hz) for ct in current_tones):
                 break
 
-            current_sequence.append(group)
+            current_sequence.append(g)
 
         # Validate
         if len(current_sequence) >= min_alternations and len(current_tones) == 2:
+            # canonicalize the two tones using medians of their occurrences
+            lows, highs = [], []
+            a, b = current_tones
+            for gs, ge, gd, freqs in current_sequence:
+                fc = group_center((gs, ge, gd, freqs))
+                (lows if abs(fc - a) < abs(fc - b) else highs).append(fc)
+            det = sorted([statistics.median(lows) if lows else a,
+                          statistics.median(highs) if highs else b])
+
             sequences.append({
                 "tone_id": f"hl_{id_index}",
-                "detected": sorted([round(current_tones[0],1), round(current_tones[1],1)]),
+                "detected": [round(det[0], 1), round(det[1], 1)],
                 "start": current_sequence[0][0],
-                "end": current_sequence[-1][1],
+                "end":   current_sequence[-1][1],
                 "length": round(current_sequence[-1][1] - current_sequence[0][0], 2),
-                "alternations": len(current_sequence)
+                "alternations": len(current_sequence),
             })
             id_index += 1
 
