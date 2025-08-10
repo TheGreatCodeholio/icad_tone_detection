@@ -23,6 +23,9 @@ class FrequencyExtraction:
             fe_merge_short_gaps_ms: int = 0,
             fe_silence_below_global_db: float = -28.0,
             fe_snr_above_noise_db: float = 6.0,
+            fe_abs_cap_hz=10.0,
+            fe_force_split_step_hz=12.0,
+            fe_split_lookahead_frames=1
     ):
         self.samples = samples
         self.frame_rate = frame_rate
@@ -33,6 +36,9 @@ class FrequencyExtraction:
         self.fe_merge_short_gaps_ms = fe_merge_short_gaps_ms
         self.fe_silence_below_global_db = fe_silence_below_global_db
         self.fe_snr_above_noise_db = fe_snr_above_noise_db
+        self.fe_abs_cap_hz = fe_abs_cap_hz
+        self.fe_force_split_step_hz = fe_force_split_step_hz
+        self.fe_split_lookahead_frames = fe_split_lookahead_frames
 
     # --------- helpers ---------
     @staticmethod
@@ -148,7 +154,7 @@ class FrequencyExtraction:
         pct_tol = abs(prev_f) * self.matching_threshold / 100.0
         # absolute cap (prevents massive windows at high f); ~30 Hz is good for pager-like tones
         abs_cap_hz = 30.0
-        return min(pct_tol, abs_cap_hz)
+        return min(pct_tol, self.fe_abs_cap_hz)
 
     def calculate_times(self, start_index, end_index, time_samples, step_s):
         """
@@ -192,6 +198,29 @@ class FrequencyExtraction:
                     cur = [freqs[i]]
                     start_i = i
                     continue
+
+                step = abs(freqs[i] - freqs[i - 1])
+
+                # NEW: hard split if the instantaneous step is large enough
+                if step > self.fe_force_split_step_hz:
+                    # Optional tiny lookahead to avoid noise-driven splits
+                    la = self.fe_split_lookahead_frames
+                    if la > 0 and i + la < len(freqs):
+                        next_med = np.median(freqs[i:i+la+1])
+                        prev_med = np.median(cur[-min(len(cur), la+1):])
+                        if abs(next_med - prev_med) <= self.fe_force_split_step_hz * 0.6:
+                            # looks like noise; fall through to soft check
+                            pass
+                        else:
+                            groups.append(flush(start_i, i - 1, cur))
+                            cur = [freqs[i]]
+                            start_i = i
+                            continue
+                    else:
+                        groups.append(flush(start_i, i - 1, cur))
+                        cur = [freqs[i]]
+                        start_i = i
+                        continue
 
                 thr = self.dynamic_threshold(freqs, i)
                 if abs(freqs[i] - freqs[i - 1]) <= thr:

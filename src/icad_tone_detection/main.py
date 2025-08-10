@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.2"
+__version__ = "2.8.3"
 
 
 @dataclass
@@ -125,6 +125,9 @@ def tone_detect(
         fe_merge_short_gaps_ms: int = 0,
         fe_silence_below_global_db: float = -28.0,
         fe_snr_above_noise_db: float = 6.0,
+        fe_abs_cap_hz: float = 15.0,
+        fe_force_split_step_hz: float = 12.0,
+        fe_split_lookahead_frames: int = 1,
 
         # --- Quick Call (two-tone A/B) ---
         tone_a_min_length=0.85,
@@ -208,6 +211,20 @@ def tone_detect(
 
     fe_snr_above_noise_db : float, default 6.0
         Additionally require the frame to be at least this many dB above a simple noise-floor estimate.
+
+    fe_abs_cap_hz : float or None, default None
+        Absolute cap on the dynamic, percent-based grouping tolerance (per-frame) in Hz. Prevents the
+        allowed drift from becoming too large at high frequencies. If None, an internal default
+        (≈30 Hz) is used.
+
+    fe_force_split_step_hz : float or None, default None
+        If the absolute step change between adjacent detected frames exceeds this threshold (Hz),
+        force a group boundary even if the dynamic tolerance would have merged them. Useful to
+        stop slowly-sliding tones from being lumped into one group. If None, disabled.
+
+    fe_split_lookahead_frames : int, default 0
+        When deciding a force-split based on `fe_force_split_step_hz`, look ahead up to N future frames
+        to confirm the change. Helps avoid over-splitting caused by a single spurious frame.
 
     # ----- Two-tone (Quick Call) -----
     tone_a_min_length : float, default 0.85
@@ -353,6 +370,9 @@ def tone_detect(
             fe_merge_short_gaps_ms=fe_merge_short_gaps_ms,
             fe_silence_below_global_db=fe_silence_below_global_db,
             fe_snr_above_noise_db=fe_snr_above_noise_db,
+            fe_abs_cap_hz=fe_abs_cap_hz,
+            fe_force_split_step_hz=fe_force_split_step_hz,
+            fe_split_lookahead_frames=fe_split_lookahead_frames,
         ).get_audio_frequencies()
     except Exception as e:
         raise FrequencyExtractionError(f"Frequency extraction failed on {audio_path}: {e}") from e
@@ -380,29 +400,54 @@ Analyzing audio at:        {audio_path}
 
 Matching Threshold:        {matching_threshold}%
 Time Resolution (ms):      {time_resolution_ms}
-Tone A Min Length (s):     {tone_a_min_length}
-Tone B Min Length (s):     {tone_b_min_length}
-Long Tone Min Length (s):  {long_tone_min_length}
-Hi-Low Interval (s):       {hi_low_interval}
-Hi-Low Min Alternations:   {hi_low_min_alternations}
 
-Detect Pulsed:             {detect_pulsed}
-  Pulsed BW (Hz):          {pulsed_bw_hz}
-  Pulsed Min Cycles:       {pulsed_min_cycles}
-  Pulsed ON range (ms):    {pulsed_min_on_ms}..{pulsed_max_on_ms}
-  Pulsed OFF range (ms):   {pulsed_min_off_ms}..{pulsed_max_off_ms}
+[ Frequency Extraction (frontend) ]
+  Band (Hz):               {fe_freq_band[0]}..{fe_freq_band[1]}
+  Merge short gaps (ms):   {fe_merge_short_gaps_ms}
+  Silence < global (dB):   {fe_silence_below_global_db}
+  SNR above noise (dB):    {fe_snr_above_noise_db}
+  Abs cap (Hz):            {fe_abs_cap_hz}
+  Force-split step (Hz):   {fe_force_split_step_hz}
+  Split lookahead (frames):{fe_split_lookahead_frames}
 
-Detect Two-Tone:           {detect_two_tone}
-Detect Long Tone:          {detect_long}
-Detect Hi-Low Warble:      {detect_hi_low}
+[ Two-Tone (Quick Call) ]
+  Tone A min len (s):      {tone_a_min_length}
+  Tone B min len (s):      {tone_b_min_length}
+  A→B max gap (s):         {two_tone_max_gap_between_a_b}
+  Tone BW (Hz):            {two_tone_bw_hz}
+  Min A/B sep (Hz):        {two_tone_min_pair_separation_hz}
+  Enabled:                 {detect_two_tone}
 
-Detect MDC/FleetSync:      {detect_mdc}
-  MDC High Pass (Hz):      {mdc_high_pass}
-  MDC Low Pass (Hz):       {mdc_low_pass}
-Detect DTMF:               {detect_dtmf}
+[ Long Tone ]
+  Min length (s):          {long_tone_min_length}
+  Tone BW (Hz):            {long_tone_bw_hz}
+  Enabled:                 {detect_long}
+
+[ Hi–Low Warble ]
+  Interval (s):            {hi_low_interval}
+  Min alternations:        {hi_low_min_alternations}
+  Tone BW (Hz):            {hi_low_tone_bw_hz}
+  Min pair sep (Hz):       {hi_low_min_pair_separation_hz}
+  Enabled:                 {detect_hi_low}
+
+[ Pulsed Single Tone ]
+  Tone BW (Hz):            {pulsed_bw_hz}
+  Min cycles:              {pulsed_min_cycles}
+  ON range (ms):           {pulsed_min_on_ms}..{pulsed_max_on_ms}
+  OFF range (ms):          {pulsed_min_off_ms}..{pulsed_max_off_ms}
+  Auto-center band (Hz):   {pulsed_auto_center_band[0]}..{pulsed_auto_center_band[1]}
+  Mode bin (Hz):           {pulsed_mode_bin_hz}
+  Enabled:                 {detect_pulsed}
+
+[ External Decoders ]
+  MDC/FleetSync enabled:   {detect_mdc}
+    High pass (Hz):        {mdc_high_pass}
+    Low  pass (Hz):        {mdc_low_pass}
+  DTMF enabled:            {detect_dtmf}
 
 Total Duration (s):        {duration_seconds:.2f}
 Sample Rate (Hz):          {frame_rate}
+Guard (s):                 {0.5 * (time_resolution_ms / 1000.0):.3f}
 
 Matched Frequencies ({len(matched_frequencies)} groups):
 {freq_summary}

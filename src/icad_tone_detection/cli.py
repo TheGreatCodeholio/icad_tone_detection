@@ -16,6 +16,12 @@ Examples:
     --pulsed_min_off_ms 25  --pulsed_max_off_ms 350 \
     --hi_low_interval 0.2 --hi_low_min_alternations 6 \
     --debug
+
+  # Use FE split/cap controls
+  icad-tone-detect alarm.wav \
+    --fe_abs_cap_hz 30 \
+    --fe_force_split_step_hz 18 \
+    --fe_split_lookahead_frames 2
 """
 from __future__ import annotations
 
@@ -31,12 +37,6 @@ from icad_tone_detection import tone_detect
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 def str2bool(value: str) -> bool:
-    """
-    Convert common string representations of truthy / falsy values to bool.
-
-    Accepted truthy values:  "true", "yes", "y", "1"
-    Accepted falsy values:   "false", "no", "n", "0"
-    """
     true_set  = {"true", "yes", "y", "1"}
     false_set = {"false", "no", "n", "0"}
 
@@ -56,9 +56,6 @@ def str2bool(value: str) -> bool:
 
 
 def float_pair(text: str) -> Tuple[float, float]:
-    """
-    Parse 'LOW,HIGH' or 'LOW HIGH' into a (low, high) float tuple.
-    """
     parts = [p for chunk in text.replace(",", " ").split() for p in [chunk] if p]
     if len(parts) != 2:
         raise argparse.ArgumentTypeError("Expected two floats: 'LOW,HIGH' or 'LOW HIGH'")
@@ -66,6 +63,19 @@ def float_pair(text: str) -> Tuple[float, float]:
     if not (low < high):
         raise argparse.ArgumentTypeError("LOW must be < HIGH")
     return (low, high)
+
+
+def float_or_none(text: str) -> float | None:
+    """
+    Accept a float or 'none'/'off' to disable.
+    """
+    v = text.strip().lower()
+    if v in {"none", "off", "disable", "disabled"}:
+        return None
+    try:
+        return float(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"Expected a float or 'none'; got '{text}'") from e
 
 
 # --------------------------------------------------------------------------- #
@@ -98,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Mark frame OFF if its peak is this many dB below global peak (default: -28)")
     p.add_argument("--fe_snr_above_noise_db", type=float, default=6.0, metavar="dB",
                    help="Additional SNR above estimated noise floor (default: 6)")
+    # NEW: advanced FE controls
+    p.add_argument("--fe_abs_cap_hz", type=float_or_none, default=None, metavar="HZ|none",
+                   help="Absolute cap [Hz] on dynamic tolerance; prevents huge bands at high freqs "
+                        "(default: None => internal default)")
+    p.add_argument("--fe_force_split_step_hz", type=float_or_none, default=None, metavar="HZ|none",
+                   help="Force a group split if adjacent frames jump by > this many Hz "
+                        "(default: None = disabled)")
+    p.add_argument("--fe_split_lookahead_frames", type=int, default=0, metavar="N",
+                   help="Look ahead up to N frames to confirm a forced split (default: 0)")
 
     # -------- Two-tone (Quick Call) --------
     p.add_argument("--tone_a_min_length", "-a", type=float, default=0.85, metavar="SEC",
@@ -189,6 +208,9 @@ def main(argv: list[str] | None = None) -> None:
         fe_merge_short_gaps_ms=args.fe_merge_short_gaps_ms,
         fe_silence_below_global_db=args.fe_silence_below_global_db,
         fe_snr_above_noise_db=args.fe_snr_above_noise_db,
+        fe_abs_cap_hz=args.fe_abs_cap_hz,
+        fe_force_split_step_hz=args.fe_force_split_step_hz,
+        fe_split_lookahead_frames=args.fe_split_lookahead_frames,
 
         # Two-tone
         tone_a_min_length=args.tone_a_min_length,
