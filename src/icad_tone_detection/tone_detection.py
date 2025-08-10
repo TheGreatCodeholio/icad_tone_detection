@@ -7,6 +7,8 @@ from collections import Counter, defaultdict
 import numpy as np
 from pydub import AudioSegment
 
+def _close_to_any(f: float, pool: set[float], tol_hz: float) -> bool:
+    return any(abs(f - p) <= tol_hz for p in pool)
 
 def group_center(freq_group):
     """Return a robust center freq (median of non-zero samples) for a group tuple (s,e,len,freqs)."""
@@ -36,6 +38,12 @@ def _robust_mode(vals: List[float], bin_size: float = 5.0) -> float:
     top_bin = max(bins.items(), key=lambda kv: kv[1])[0]
     in_bin = [v for v in vals if int(v // bin_size) == top_bin]
     return float(statistics.median(in_bin)) if in_bin else float(statistics.median(vals))
+
+def within_tolerance(f1, f2, tolerance=0.02):
+    if f1 is None or f2 is None:
+        return False
+    denom = max(1.0, max(abs(f1), abs(f2)))   # symmetric & avoids tiny denom
+    return abs(f1 - f2) / denom <= tolerance
 
 def detect_two_tone_tones(
         frequency_matches,
@@ -108,54 +116,40 @@ def detect_two_tone_tones(
     return two_tone_matches
 
 
-def detect_long_tones(frequency_matches, detected_quickcall, min_duration=2.0, tone_bw_hz=25.0):
+def detect_long_tones(
+        frequency_matches,
+        min_duration: float = 3.1,
+        tone_bw_hz: float = 25.0,
+        min_freq_hz: float = 200.0,
+):
+    """
+    Report stable, single-frequency long tones on the *already time-filtered* groups.
+    """
     if min_duration <= 0:
         raise ValueError("min_duration must be > 0")
     if tone_bw_hz <= 0:
         raise ValueError("tone_bw_hz must be > 0")
 
-    if not frequency_matches:
-        return []
-
     long_tone_matches = []
-    excluded = set([0.0])
-
-    for qc in detected_quickcall:
-        excluded.update(qc["detected"][:2])
-
     for start, end, duration, freqs in frequency_matches:
         if not freqs:
             continue
-        f0 = freqs[0]
-        if f0 in excluded or f0 <= 500:
+        # robust center/stability using your helpers
+        if not group_is_stable((start, end, duration, freqs), bw_hz=tone_bw_hz):
             continue
-        if duration >= min_duration and group_is_stable((start, end, duration, freqs), bw_hz=tone_bw_hz):
+        center = group_center((start, end, duration, freqs))
+        if center <= min_freq_hz:
+            continue
+        if duration >= min_duration:
             long_tone_matches.append({
                 "tone_id": f"lt_{len(long_tone_matches) + 1}",
-                "detected": round(group_center((start, end, duration, freqs)), 1),
+                "detected": round(center, 1),
                 "start": start,
                 "end": end,
-                "length": duration
+                "length": duration,
             })
 
     return long_tone_matches
-
-
-def within_tolerance(frequency1, frequency2, tolerance=0.02):
-    """
-    Check if two frequencies are within a specified tolerance percentage.
-
-    Parameters:
-    - frequency1: The first frequency to compare.
-    - frequency2: The second frequency to compare.
-    - tolerance: The tolerance threshold as a percentage.
-
-    Returns:
-    - A boolean indicating whether the two frequencies are within the specified tolerance.
-    """
-    if frequency1 is None or frequency2 is None:
-        return False
-    return abs(frequency1 - frequency2) / frequency1 <= tolerance
 
 def detect_pulsed_single_tone(
         frequency_matches: List[Tuple[float, float, float, List[float]]],

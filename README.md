@@ -220,4 +220,4 @@ Issues and pull requests welcome: [GitHub repo](https://github.com/thegreatcodeh
 
 ## License
 
-MIT © TheGreatCodeholio • Version 2.8.0 • Python 3.9+
+MIT © TheGreatCodeholio • Version 2.8.1 • Python 3.9+

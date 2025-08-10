@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.0"
+__version__ = "2.8.1"
 
 
 @dataclass
@@ -76,17 +76,6 @@ def choose_decode_binary() -> str:
     return path_str
 
 
-def _intervals_from_hits(hits: List[Dict]) -> List[Tuple[float, float]]:
-    """(start,end) list for masking overlaps."""
-    out = []
-    for h in hits:
-        s = float(h.get("start", 0.0))
-        e = float(h.get("end", s))
-        if e > s:
-            out.append((s, e))
-    return out
-
-
 def _outside_intervals(group, intervals: List[Tuple[float, float]]) -> bool:
     """Return True if (group_start, group_end) does NOT overlap any interval."""
     gs, ge = float(group[0]), float(group[1])
@@ -95,6 +84,36 @@ def _outside_intervals(group, intervals: List[Tuple[float, float]]) -> bool:
             return False
     return True
 
+def _overlaps(a, b, guard=0.0):
+    (s1,e1),(s2,e2) = a,b
+    return not (e1 + guard <= s2 or e2 + guard <= s1)
+
+def _intervals_from_hits(hits):
+    # generic: uses start/end keys
+    return [(h["start"], h["end"]) for h in hits]
+
+def _qc_windows_from_hits(qc_hits, which="both", guard=0.0):
+    # build AB windows specifically (so we can drop only B if desired)
+    wins = []
+    for h in qc_hits:
+        s, e = float(h["start"]), float(h["end"])
+        la, lb = float(h["tone_a_length"]), float(h["tone_b_length"])
+        a_win = (s, s + la)
+        b_win = (e - lb, e)
+        if which in ("both","A"): wins.append(a_win)
+        if which in ("both","B"):  wins.append(b_win)
+    # optional: expand slightly
+    return [(max(0.0, s-guard), e+guard) for (s,e) in wins]
+
+def _filter_groups_outside(groups, windows, guard=0.0):
+    if not windows: return groups
+    outs = []
+    for g in groups:
+        win = (g[0], g[1])
+        if any(_overlaps(win, w, guard) for w in windows):
+            continue
+        outs.append(g)
+    return outs
 
 def tone_detect(
         audio_path,
@@ -391,7 +410,10 @@ Matched Frequencies ({len(matched_frequencies)} groups):
 """
         print(debug_info)
 
-    # ---- 1) Pulsed single tone FIRST (e.g., 1007/0/1007/0) ----
+    # ---- window guard ~ half a hop (prevents edge-touch overlaps) ----
+    guard_s = 0.5 * (time_resolution_ms / 1000.0)
+
+    # ---- 1) Pulsed FIRST ----
     if detect_pulsed:
         pulsed_result = detect_pulsed_single_tone(
             matched_frequencies,
@@ -406,41 +428,46 @@ Matched Frequencies ({len(matched_frequencies)} groups):
             mode_bin_hz=pulsed_mode_bin_hz,
         )
         pulsed_windows = _intervals_from_hits(pulsed_result)
+        g1 = _filter_groups_outside(matched_frequencies, pulsed_windows, guard=guard_s)
     else:
         pulsed_result = []
-        pulsed_windows = []
+        g1 = matched_frequencies
 
-    # Filter out pulsed time windows from other detectors to avoid overlaps
-    filtered_for_others = (
-        [g for g in matched_frequencies if _outside_intervals(g, pulsed_windows)]
-        if detect_pulsed else matched_frequencies
-    )
-
-    # ---- 2) Two-tone (A/B), Long, Warble on filtered groups ----
+    # ---- 2) Two-tone on pulsed-filtered groups ----
     if detect_two_tone:
         two_tone_result = detect_two_tone_tones(
-            filtered_for_others,
+            g1,
             min_tone_a_length=tone_a_min_length,
             min_tone_b_length=tone_b_min_length,
             max_gap_between_a_b=two_tone_max_gap_between_a_b,
             tone_bw_hz=two_tone_bw_hz,
             min_pair_separation_hz=two_tone_min_pair_separation_hz,
         )
+        # mask only B by default (prevents B→long collisions). Use which="both" if you want A masked too.
+        qc_windows_B = _qc_windows_from_hits(two_tone_result, which="B", guard=guard_s)
+        g2 = _filter_groups_outside(g1, qc_windows_B, guard=guard_s)
     else:
         two_tone_result = []
+        g2 = g1
 
+    # ---- 3) Long on groups with pulsed+QC(B) removed; then mask long windows ----
     if detect_long:
         long_result = detect_long_tones(
-            filtered_for_others, two_tone_result,
+            g2,
             min_duration=long_tone_min_length,
             tone_bw_hz=long_tone_bw_hz,
+            min_freq_hz=fe_freq_band[0],
         )
+        long_windows = _intervals_from_hits(long_result)
+        g3 = _filter_groups_outside(g2, long_windows, guard=guard_s)
     else:
         long_result = []
+        g3 = g2
 
+    # ---- 4) Hi/Low on groups with pulsed + QC(B) + long removed ----
     if detect_hi_low:
         hi_low_result = detect_warble_tones(
-            filtered_for_others,
+            g3,
             interval_length=hi_low_interval,
             min_alternations=hi_low_min_alternations,
             tone_bw_hz=hi_low_tone_bw_hz,
@@ -449,7 +476,7 @@ Matched Frequencies ({len(matched_frequencies)} groups):
     else:
         hi_low_result = []
 
-    # ---- 3) MDC / DTMF (raw audio) ----
+    # ---- 5) MDC / DTMF (raw audio) ----
     if detect_mdc:
         try:
             mdc_result = detect_mdc_tones(
