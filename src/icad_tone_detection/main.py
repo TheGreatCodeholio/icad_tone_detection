@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.4"
+__version__ = "2.8.5"
 
 
 @dataclass
@@ -166,180 +166,197 @@ def tone_detect(
         detect_mdc=True,
         mdc_high_pass=200,
         mdc_low_pass=4000,
+
         detect_dtmf=True,
+        dtmf_min_ms: int = 100,
+        dtmf_merge_ms: int = 75,
+        dtmf_start_offset_ms: int = -20,
+        dtmf_end_offset_ms: int = 20,
 
         debug=False,
 ):
     """
-    Detect paging-style tones in an audio file (local path, URL, or in-memory).
+        Detect paging-style tones in an audio file (local path, URL, or in-memory).
 
-    This function runs a Short-Time Fourier Transform (STFT) frontend to extract per-frame
-    dominant frequencies, then applies several pattern recognizers:
+        This function runs a Short-Time Fourier Transform (STFT) frontend to extract per-frame
+        dominant frequencies, then applies several pattern recognizers:
 
-      • Pulsed single tone (ON/OFF/ON around an inferred center)
-      • Two-tone “Quick Call” A→B (A is short, B is longer)
-      • Long single tone
-      • Hi–Low warble (alternating two distinct tones)
-      • Optional external decoders: MDC1200/FleetSync, DTMF
+          • Pulsed single tone (ON/OFF/ON around an inferred center)
+          • Two-tone “Quick Call” A→B (A is short, B is longer)
+          • Long single tone
+          • Hi–Low warble (alternating two distinct tones)
+          • Optional external decoders: MDC1200/FleetSync, DTMF
 
-    The pulsed detector (if enabled) runs first and masks its time windows so the other
-    detectors don’t double-count the same energy.
+        The pulsed detector (if enabled) runs first and masks its time windows so the other
+        detectors don’t double-count the same energy.
 
-    Parameters
-    ----------
-    audio_path : str | bytes | io.BytesIO | pydub.AudioSegment
-        Path/URL/bytes-like object for audio readable by FFmpeg. Multi-channel audio is mixed to mono.
+        Parameters
+        ----------
+        audio_path : str | bytes | io.BytesIO | pydub.AudioSegment
+            Path/URL/bytes-like object for audio readable by FFmpeg. Multi-channel audio is mixed to mono.
 
-    matching_threshold : float, default 2.5
-        Percentage tolerance used when grouping adjacent STFT frames into a continuous frequency group.
-        Higher allows more drift before a new group is started.
+        matching_threshold : float, default 2.5
+            Percentage tolerance used when grouping adjacent STFT frames into a continuous frequency group.
+            Higher allows more drift before a new group is started.
 
-    time_resolution_ms : int, default 50
-        Hop size (and effective time resolution) of the STFT, in milliseconds. Smaller → finer time
-        resolution but potentially noisier frequency estimates.
+        time_resolution_ms : int, default 50
+            Hop size (and effective time resolution) of the STFT, in milliseconds. Smaller → finer time
+            resolution but potentially noisier frequency estimates.
 
-    # ----- Frequency-extraction (frontend) knobs -----
-    fe_freq_band : (float, float), default (200.0, 3000.0)
-        [Hz] Band to search for dominant peaks. Frames outside are ignored for peak-picking.
+        # ----- Frequency-extraction (frontend) knobs -----
+        fe_freq_band : (float, float), default (200.0, 3000.0)
+            [Hz] Band to search for dominant peaks. Frames outside are ignored for peak-picking.
 
-    fe_merge_short_gaps_ms : int, default 0
-        Merge adjacent groups separated by ≤ this gap (ms). Helps when a single missing frame
-        would otherwise split one logical tone into two groups.
+        fe_merge_short_gaps_ms : int, default 0
+            Merge adjacent groups separated by ≤ this gap (ms). Helps when a single missing frame
+            would otherwise split one logical tone into two groups.
 
-    fe_silence_below_global_db : float, default -28.0
-        A frame is considered OFF if its peak is this many dB below the file’s global peak.
+        fe_silence_below_global_db : float, default -28.0
+            A frame is considered OFF if its peak is this many dB below the file’s global peak.
 
-    fe_snr_above_noise_db : float, default 6.0
-        Additionally require the frame to be at least this many dB above a simple noise-floor estimate.
+        fe_snr_above_noise_db : float, default 6.0
+            Additionally require the frame to be at least this many dB above a simple noise-floor estimate.
 
-    fe_abs_cap_hz : float or None, default None
-        Absolute cap on the dynamic, percent-based grouping tolerance (per-frame) in Hz. Prevents the
-        allowed drift from becoming too large at high frequencies. If None, an internal default
-        (≈30 Hz) is used.
+        fe_abs_cap_hz : float or None, default None
+            Absolute cap on the dynamic, percent-based grouping tolerance (per-frame) in Hz. Prevents the
+            allowed drift from becoming too large at high frequencies. If None, an internal default
+            (≈30 Hz) is used.
 
-    fe_force_split_step_hz : float or None, default None
-        If the absolute step change between adjacent detected frames exceeds this threshold (Hz),
-        force a group boundary even if the dynamic tolerance would have merged them. Useful to
-        stop slowly-sliding tones from being lumped into one group. If None, disabled.
+        fe_force_split_step_hz : float or None, default None
+            If the absolute step change between adjacent detected frames exceeds this threshold (Hz),
+            force a group boundary even if the dynamic tolerance would have merged them. Useful to
+            stop slowly-sliding tones from being lumped into one group. If None, disabled.
 
-    fe_split_lookahead_frames : int, default 0
-        When deciding a force-split based on `fe_force_split_step_hz`, look ahead up to N future frames
-        to confirm the change. Helps avoid over-splitting caused by a single spurious frame.
+        fe_split_lookahead_frames : int, default 0
+            When deciding a force-split based on `fe_force_split_step_hz`, look ahead up to N future frames
+            to confirm the change. Helps avoid over-splitting caused by a single spurious frame.
 
-    # ----- Two-tone (Quick Call) -----
-    tone_a_min_length : float, default 0.85
-        Minimum duration (seconds) of the A tone.
+        # ----- Two-tone (Quick Call) -----
+        tone_a_min_length : float, default 0.85
+            Minimum duration (seconds) of the A tone.
 
-    tone_b_min_length : float, default 2.6
-        Minimum duration (seconds) of the B tone.
+        tone_b_min_length : float, default 2.6
+            Minimum duration (seconds) of the B tone.
 
-    two_tone_max_gap_between_a_b : float, default 0.35
-        Maximum allowed gap (seconds) between the end of A and start of B.
+        two_tone_max_gap_between_a_b : float, default 0.35
+            Maximum allowed gap (seconds) between the end of A and start of B.
 
-    two_tone_bw_hz : float, default 25.0
-        [Hz] Intra-group stability band used to accept A/B groups.
+        two_tone_bw_hz : float, default 25.0
+            [Hz] Intra-group stability band used to accept A/B groups.
 
-    two_tone_min_pair_separation_hz : float, default 40.0
-        [Hz] Minimum frequency separation between A and B to consider them distinct.
+        two_tone_min_pair_separation_hz : float, default 40.0
+            [Hz] Minimum frequency separation between A and B to consider them distinct.
 
-    # ----- Hi/Low warble -----
-    hi_low_interval : float, default 0.2
-        Maximum allowed gap (seconds) between alternating hi/low groups when assembling a sequence.
+        # ----- Hi/Low warble -----
+        hi_low_interval : float, default 0.2
+            Maximum allowed gap (seconds) between alternating hi/low groups when assembling a sequence.
 
-    hi_low_min_alternations : int, default 6
-        Minimum number of alternating groups (hi,low,hi,low, …) to report a warble.
+        hi_low_min_alternations : int, default 6
+            Minimum number of alternating groups (hi,low,hi,low, …) to report a warble.
 
-    hi_low_tone_bw_hz : float, default 25.0
-        [Hz] Intra-group stability band used to accept warble groups.
+        hi_low_tone_bw_hz : float, default 25.0
+            [Hz] Intra-group stability band used to accept warble groups.
 
-    hi_low_min_pair_separation_hz : float, default 40.0
-        [Hz] Minimum separation between the two alternating tones.
+        hi_low_min_pair_separation_hz : float, default 40.0
+            [Hz] Minimum separation between the two alternating tones.
 
-    # ----- Long tone -----
-    long_tone_min_length : float, default 3.8
-        Minimum duration (seconds) of a stable, single-frequency long tone.
+        # ----- Long tone -----
+        long_tone_min_length : float, default 3.8
+            Minimum duration (seconds) of a stable, single-frequency long tone.
 
-    long_tone_bw_hz : float, default 25.0
-        [Hz] Intra-group stability band used to accept long-tone groups.
+        long_tone_bw_hz : float, default 25.0
+            [Hz] Intra-group stability band used to accept long-tone groups.
 
-    # ----- Pulsed single tone (auto-centered) -----
-    pulsed_bw_hz : float, default 25.0
-        [Hz] Allowed deviation around the inferred center for a frame to count as ON.
+        # ----- Pulsed single tone (auto-centered) -----
+        pulsed_bw_hz : float, default 25.0
+            [Hz] Allowed deviation around the inferred center for a frame to count as ON.
 
-    pulsed_min_cycles : int, default 6
-        Minimum number of ON→OFF repetitions required to report a hit.
+        pulsed_min_cycles : int, default 6
+            Minimum number of ON→OFF repetitions required to report a hit.
 
-    pulsed_min_on_ms : int, default 120
-    pulsed_max_on_ms : int, default 900
-        Bounds (milliseconds) for each ON pulse duration.
+        pulsed_min_on_ms : int, default 120
+        pulsed_max_on_ms : int, default 900
+            Bounds (milliseconds) for each ON pulse duration.
 
-    pulsed_min_off_ms : int, default 25
-    pulsed_max_off_ms : int, default 350
-        Bounds (milliseconds) for the OFF gaps between pulses.
+        pulsed_min_off_ms : int, default 25
+        pulsed_max_off_ms : int, default 350
+            Bounds (milliseconds) for the OFF gaps between pulses.
 
-    pulsed_auto_center_band : (float, float), default (200.0, 3000.0)
-        [Hz] Frequency band to search when auto-estimating the pulsed tone’s center.
+        pulsed_auto_center_band : (float, float), default (200.0, 3000.0)
+            [Hz] Frequency band to search when auto-estimating the pulsed tone’s center.
 
-    pulsed_mode_bin_hz : float, default 5.0
-        [Hz] Histogram bin width used in robust mode selection for the auto-centered frequency.
+        pulsed_mode_bin_hz : float, default 5.0
+            [Hz] Histogram bin width used in robust mode selection for the auto-centered frequency.
 
-    # ----- Enable/disable detectors -----
-    detect_pulsed : bool, default True
-        Enable/disable pulsed single-tone detection.
+        # ----- Enable/disable detectors -----
+        detect_pulsed : bool, default True
+            Enable/disable pulsed single-tone detection.
 
-    detect_two_tone : bool, default True
-        Enable/disable two-tone (Quick Call) detection.
+        detect_two_tone : bool, default True
+            Enable/disable two-tone (Quick Call) detection.
 
-    detect_long : bool, default True
-        Enable/disable long tone detection.
+        detect_long : bool, default True
+            Enable/disable long tone detection.
 
-    detect_hi_low : bool, default True
-        Enable/disable hi–low warble detection.
+        detect_hi_low : bool, default True
+            Enable/disable hi–low warble detection.
 
-    # ----- External decoders -----
-    detect_mdc : bool, default True
-        Enable/disable MDC1200/FleetSync decoder (external binary).
+        # ----- External decoders -----
+        detect_mdc : bool, default True
+            Enable/disable MDC1200/FleetSync decoder (external binary).
 
-    mdc_high_pass : int, default 200
-    mdc_low_pass  : int, default 4000
-        [Hz] Optional prefilters applied before MDC/FleetSync decode.
+        mdc_high_pass : int, default 200
+        mdc_low_pass  : int, default 4000
+            [Hz] Optional prefilters applied before MDC/FleetSync decode.
 
-    detect_dtmf : bool, default True
-        Enable/disable DTMF decoder (external binary).
+        detect_dtmf : bool, default True
+            Enable/disable DTMF decoder (external binary).
 
-    debug : bool, default False
-        If True, print a detailed dump of grouped frequencies and a summary of detections.
+        dtmf_min_ms : int, default 100
+            [ms] Minimum DTMF key-press duration. Shorter detections are suppressed.
 
-    Returns
-    -------
-    ToneDetectionResult
-        Dataclass with fields:
-          • pulsed_result : list[dict]
-          • two_tone_result : list[dict]
-          • long_result : list[dict]
-          • hi_low_result : list[dict]
-          • mdc_result : list[dict]
-          • dtmf_result : list[dict]
+        dtmf_merge_ms : int, default 75
+            [ms] Same-digit debounce/merge gap. If the same digit reappears within this silence window,
+            it is unified into the ongoing press instead of starting a new one.
 
-    Raises
-    ------
-    FFmpegNotFoundError
-        FFmpeg is missing from PATH.
-    AudioLoadError
-        The audio cannot be loaded or decoded.
-    FrequencyExtractionError
-        STFT processing or grouping failed.
-    ToneDetectionError
-        External decoders (MDC/DTMF) failed.
+        dtmf_start_offset_ms : int, default -20
+            [ms] Presentation offset applied to reported DTMF start timestamps (can be negative).
 
-    Notes
-    -----
-    • For best results, use sample rates ≥ 16 kHz and avoid heavy compression.
-    • `time_resolution_ms` should be compatible with the shortest cadence you want to detect
-      (very short pulses often benefit from 25 ms).
-    • The pulsed detector auto-centers within `pulsed_auto_center_band`; no fixed center is required.
+        dtmf_end_offset_ms : int, default 20
+            [ms] Presentation offset applied to reported DTMF end timestamps.
+
+        debug : bool, default False
+            If True, print a detailed dump of grouped frequencies and a summary of detections.
+
+        Returns
+        -------
+        ToneDetectionResult
+            Dataclass with fields:
+              • pulsed_result : list[dict]
+              • two_tone_result : list[dict]
+              • long_result : list[dict]
+              • hi_low_result : list[dict]
+              • mdc_result : list[dict]
+              • dtmf_result : list[dict]
+
+        Raises
+        ------
+        FFmpegNotFoundError
+            FFmpeg is missing from PATH.
+        AudioLoadError
+            The audio cannot be loaded or decoded.
+        FrequencyExtractionError
+            STFT processing or grouping failed.
+        ToneDetectionError
+            External decoders (MDC/DTMF) failed.
+
+        Notes
+        -----
+        • For best results, use sample rates ≥ 16 kHz and avoid heavy compression.
+        • `time_resolution_ms` should be compatible with the shortest cadence you want to detect
+          (very short pulses often benefit from 25 ms).
+        • The pulsed detector auto-centers within `pulsed_auto_center_band`; no fixed center is required.
     """
-
 
     if shutil.which("ffmpeg") is None:
         raise FFmpegNotFoundError(
@@ -444,6 +461,10 @@ Time Resolution (ms):      {time_resolution_ms}
     High pass (Hz):        {mdc_high_pass}
     Low  pass (Hz):        {mdc_low_pass}
   DTMF enabled:            {detect_dtmf}
+    Min ms:                 {dtmf_min_ms}
+    Merge gap ms:           {dtmf_merge_ms}
+    Start offset ms:        {dtmf_start_offset_ms}
+    End   offset ms:        {dtmf_end_offset_ms}
 
 Total Duration (s):        {duration_seconds:.2f}
 Sample Rate (Hz):          {frame_rate}
@@ -539,7 +560,13 @@ Matched Frequencies ({len(matched_frequencies)} groups):
         try:
             dtmf_result = detect_dtmf_tones(
                 audio_segment,
-                binary_path=icad_decode_path
+                binary_path=icad_decode_path,
+                highpass_freq=0,
+                lowpass_freq=0,
+                min_ms=dtmf_min_ms,
+                merge_ms=dtmf_merge_ms,
+                start_offset_ms=dtmf_start_offset_ms,
+                end_offset_ms=dtmf_end_offset_ms,
             )
         except Exception as e:
             raise ToneDetectionError(f"DTMF detection failed: {e}") from e

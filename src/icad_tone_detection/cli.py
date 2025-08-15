@@ -22,6 +22,14 @@ Examples:
     --fe_abs_cap_hz 30 \
     --fe_force_split_step_hz 18 \
     --fe_split_lookahead_frames 2
+
+  # Override DTMF detection behavior (min press, merge window, and timestamp offsets)
+  icad-tone-detect ivr.wav \
+    --detect_dtmf true \
+    --dtmf_min_ms 120 \
+    --dtmf_merge_ms 60 \
+    --dtmf_start_offset_ms -15 \
+    --dtmf_end_offset_ms 25
 """
 from __future__ import annotations
 
@@ -186,6 +194,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detect_dtmf", type=str2bool, default=True, metavar="{true|false}",
                    help="Enable/disable DTMF detection (default: true)")
 
+    # DTMF decoder controls
+    p.add_argument("--dtmf_min_ms", type=int, default=100, metavar="MS",
+                   help="Minimum DTMF keypress duration (default: 100 ms)")
+    p.add_argument("--dtmf_merge_ms", type=int, default=75, metavar="MS",
+                   help="Same-digit merge/debounce gap (default: 75 ms)")
+    p.add_argument("--dtmf_start_offset_ms", type=int, default=-20, metavar="MS",
+                   help="Presentation offset applied to DTMF start times (default: -20 ms)")
+    p.add_argument("--dtmf_end_offset_ms", type=int, default=20, metavar="MS",
+                   help="Presentation offset applied to DTMF end times (default: 20 ms)")
+
     # -------- Misc --------
     p.add_argument("-d", "--debug", action="store_true",
                    help="Verbose debug output")
@@ -250,6 +268,12 @@ def main(argv: list[str] | None = None) -> None:
         mdc_high_pass=args.mdc_high_pass,
         mdc_low_pass=args.mdc_low_pass,
         detect_dtmf=args.detect_dtmf,
+
+        # DTMF controls
+        dtmf_min_ms=args.dtmf_min_ms,
+        dtmf_merge_ms=args.dtmf_merge_ms,
+        dtmf_start_offset_ms=args.dtmf_start_offset_ms,
+        dtmf_end_offset_ms=args.dtmf_end_offset_ms,
 
         # Misc
         debug=args.debug,

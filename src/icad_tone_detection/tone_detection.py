@@ -507,7 +507,11 @@ def detect_dtmf_tones(
         segment: AudioSegment,
         binary_path: str = "icad_decode",
         highpass_freq: int = 0,
-        lowpass_freq: int = 0
+        lowpass_freq: int = 0,
+        min_ms: int = 400,
+        merge_ms: int = 75,
+        start_offset_ms: int = -20,
+        end_offset_ms: int = 20,
 ) -> list[str]:
     """
     Decode DTMF tones by piping raw audio to an external 'icad_decode' binary.
@@ -516,6 +520,10 @@ def detect_dtmf_tones(
     :param binary_path: Path to the 'icad_decode' executable (default 'icad_decode').
     :param highpass_freq: Frequency (Hz) for high-pass filter. 0 or None to skip.
     :param lowpass_freq: Frequency (Hz) for low-pass filter. 0 or None to skip.
+    :param min_ms: Minimum key press length (ms).
+    :param merge_ms: Same-digit debounce/merge gap (ms).
+    :param start_offset_ms: Presentation start offset (ms) applied by decoder.
+    :param end_offset_ms: Presentation end offset (ms) applied by decoder.
 
     :return: dtmf_matches list of dicts, each representing a detected DTMF key press.
     :raises RuntimeError: if the decode process fails or returns non-zero.
@@ -548,7 +556,13 @@ def detect_dtmf_tones(
     # ----------------------------------------------------------------
     # 2) Pipe the raw audio bytes into 'icad_decode' via subprocess
     # ----------------------------------------------------------------
-    cmd = [binary_path, "-m", "dtmf", "-"]  # '-' indicates reading from STDIN
+    cmd = [
+        binary_path, "-m", "dtmf", "-",
+        "--dtmf-min-ms", str(int(min_ms)),
+        "--dtmf-merge-ms", str(int(merge_ms)),
+        "--dtmf-start-offset-ms", str(int(start_offset_ms)),
+        "--dtmf-end-offset-ms", str(int(end_offset_ms)),
+    ]
     try:
         proc = subprocess.Popen(
             cmd,
