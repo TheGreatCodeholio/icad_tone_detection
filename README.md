@@ -55,19 +55,19 @@ The built-in defaults are intentionally **neutral** and should work well on typi
 
 Use the simplest call first:
 
-^^^python
+```python
 from icad_tone_detection import tone_detect
 
 result = tone_detect("my_scanner_recording.wav")
 print(result.pulsed_result)
 print(result.two_tone_result)
-^^^
+```
 
 Or via CLI:
 
-^^^bash
+```bash
 icad-tone-detect my_scanner_recording.wav --debug
-^^^
+```
 
 **Only tweak parameters if you have a specific problem** (e.g., very drifty tones, very brisk pulses, or unusually noisy/quiet recordings).
 
@@ -361,4 +361,4 @@ Issues and pull requests welcome: [GitHub repo](https://github.com/thegreatcodeh
 
 ## License
 
-MIT © TheGreatCodeholio • Version 2.8.3 • Python 3.9+
+MIT © TheGreatCodeholio • Version 2.8.4 • Python 3.9+
