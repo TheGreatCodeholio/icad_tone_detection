@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.5"
+__version__ = "2.8.6"
 
 
 @dataclass
@@ -489,7 +489,6 @@ Matched Frequencies ({len(matched_frequencies)} groups):
             max_on_ms=pulsed_max_on_ms,
             min_off_ms=pulsed_min_off_ms,
             max_off_ms=pulsed_max_off_ms,
-            time_resolution_ms=time_resolution_ms,
             auto_center_band=pulsed_auto_center_band,
             mode_bin_hz=pulsed_mode_bin_hz,
         )

@@ -154,178 +154,155 @@ def detect_long_tones(
 def detect_pulsed_single_tone(
         frequency_matches: List[Tuple[float, float, float, List[float]]],
         *,
-        bw_hz: float = 25.0,               # ±Hz counted as ON around the inferred center
-        min_cycles: int = 6,               # required ON→OFF repetitions
-        min_on_ms: int = 120,              # ON duration bounds (ms)
+        bw_hz: float = 25.0,
+        min_cycles: int = 6,
+        min_on_ms: int = 120,
         max_on_ms: int = 900,
-        min_off_ms: int = 25,              # OFF duration bounds (ms)
+        min_off_ms: int = 25,
         max_off_ms: int = 350,
-        time_resolution_ms: int = 50,      # must match your STFT hop
-        auto_center_band: Tuple[float, float] = (200.0, 3000.0),  # where to search for center
-        mode_bin_hz: float = 5.0           # histogram bin for robust mode
+        auto_center_band: Tuple[float, float] = (200.0, 3000.0),
+        mode_bin_hz: float = 5.0,
+        off_zero_ratio: float = 0.8,     # ≥80% zeros → OFF
 ) -> List[Dict[str, Any]]:
     """
-    Detect pulsed single-tone patterns like ON/OFF/ON/OFF around an inferred center frequency.
-
-    Returns list of dicts shaped like other detectors:
-      {
-        "tone_id": "pl_1",
-        "detected": 1010.1,   # inferred center (Hz)
-        "start": 2.31,
-        "end": 5.12,
-        "length": 2.81,
-        "cycles": 8,
-        "on_ms_median": 180,
-        "off_ms_median": 95
-      }
+    Detect pulsed single-tone: ON (near one center Hz) separated by true OFF (0 Hz).
+    Any non-zero tone not near center is 'other' and breaks sequences (prevents Hi/Low).
     """
-    if bw_hz <= 0:
-        raise ValueError("bw_hz must be > 0")
-    if mode_bin_hz <= 0:
-        raise ValueError("mode_bin_hz must be > 0")
-    if min_on_ms > max_on_ms:
-        raise ValueError("min_on_ms must be <= max_on_ms")
-    if min_off_ms > max_off_ms:
-        raise ValueError("min_off_ms must be <= max_off_ms")
-    lo, hi = auto_center_band
-    if not (lo < hi):
-        raise ValueError("auto_center_band must be (low < high)")
-
     if not frequency_matches:
         return []
+    lo, hi = auto_center_band
+    groups = sorted(frequency_matches, key=lambda g: float(g[0]))
 
-    # ---- Build fixed-step timeline (t, f_center_per_group) ----
-    step = time_resolution_ms / 1000.0
-    timeline: List[Tuple[float, float]] = []
-    for start, end, dur, freqs in frequency_matches:
-        # center per group; 0 if OFF/noisy
-        nz = [f for f in freqs if lo <= f <= hi]
-        f = float(statistics.median(nz)) if len(nz) else 0.0
-        t = start
-        while t < end - 1e-12:
-            timeline.append((round(t, 3), f))
-            t += step
-    if not timeline:
-        return []
+    # ---------- estimate center from stable non-zero groups ----------
+    def stable_med(fr: List[float], med: float) -> bool:
+        return all(abs(f - med) <= bw_hz for f in fr if f > 0)
 
-    # ---- Auto-estimate center from "pulse-like" ON groups first (weighted by duration) ----
-    on_min_s = min_on_ms / 1000.0
-    on_max_s = max_on_ms / 1000.0
-    weighted_bins = defaultdict(float)
-
-    def stable_med(freqs: List[float], med: float) -> bool:
-        return all(abs(f - med) <= bw_hz for f in freqs if f > 0)
-
-    for (gs, ge, gd, freqs) in frequency_matches:
-        if gd < on_min_s or gd > on_max_s:
-            continue
-        nz = [f for f in freqs if lo <= f <= hi]
-        if len(nz) < 2:
+    weighted_bins = defaultdict(float)  # bin -> total duration
+    for (gs, ge, gd, freqs) in groups:
+        nz = [f for f in freqs if lo <= f <= hi and f > 0]
+        if not nz:
             continue
         med = statistics.median(nz)
         if stable_med(nz, med):
-            weighted_bins[int(med // mode_bin_hz)] += gd
+            weighted_bins[int(med // mode_bin_hz)] += float(gd)
 
     if weighted_bins:
         top_bin = max(weighted_bins.items(), key=lambda kv: kv[1])[0]
-        center_candidates = []
-        for (gs, ge, gd, freqs) in frequency_matches:
-            nz = [f for f in freqs if lo <= f <= hi]
+        center_pool = []
+        for (gs, ge, gd, freqs) in groups:
+            nz = [f for f in freqs if lo <= f <= hi and f > 0]
             if not nz:
                 continue
             med = statistics.median(nz)
             if int(med // mode_bin_hz) == top_bin:
-                center_candidates.append(med)
-        center_hz = float(np.median(center_candidates))
+                center_pool.append(med)
+        center_hz = float(np.median(center_pool)) if center_pool else 0.0
     else:
-        # Fallback: use modal bin from all timeline frames within band
-        vals = [f for (_t, f) in timeline if lo <= f <= hi]
-        if not vals:
+        # fallback: modal bin of all in-band non-zero frames
+        all_vals = []
+        for (_s, _e, _d, freqs) in groups:
+            all_vals.extend([f for f in freqs if lo <= f <= hi and f > 0])
+        if not all_vals:
             return []
-        b = Counter(int(v // mode_bin_hz) for v in vals)
+        b = Counter(int(v // mode_bin_hz) for v in all_vals)
         top = max(b.items(), key=lambda kv: kv[1])[0]
-        center_hz = float(np.median([v for v in vals if int(v // mode_bin_hz) == top]))
+        center_hz = float(np.median([v for v in all_vals if int(v // mode_bin_hz) == top]))
 
-    def in_band(f: float) -> bool:
-        return (f > 0.0) and (abs(f - center_hz) <= bw_hz)
-
-    # ---- Build ON/OFF runs ----
-    runs: List[Tuple[str, float, float]] = []
-    cur_state: Optional[str] = None
-    cur_start: Optional[float] = None
-
-    for (t, f) in timeline:
-        st = "on" if in_band(f) else "off"
-        if cur_state is None:
-            cur_state, cur_start = st, t
-        elif st != cur_state:
-            runs.append((cur_state, cur_start, t))
-            cur_state, cur_start = st, t
-    if cur_state is not None and cur_start is not None:
-        runs.append((cur_state, cur_start, timeline[-1][0] + step))
-
-    if len(runs) < 2:
+    if center_hz <= 0:
         return []
 
-    # ---- Scan for alternating cycles within cadence bounds ----
-    hits: List[Dict[str, Any]] = []
-    i, pl_id = 0, 1
+    def classify_group(g):
+        gs, ge, gd, freqs = g
+        n = len(freqs) or 1
+        zeros = sum(1 for f in freqs if f == 0.0)
+        zero_ratio = zeros / n
+        if zero_ratio >= off_zero_ratio:
+            return "off", float(gs), float(ge), zero_ratio
+        nz = [f for f in freqs if f > 0 and lo <= f <= hi]
+        if nz and abs(statistics.median(nz) - center_hz) <= bw_hz:
+            return "on", float(gs), float(ge), 0.0
+        return "other", float(gs), float(ge), 0.0
 
-    while i + 1 < len(runs):
-        if runs[i][0] != "on":
-            i += 1
-            continue
-
-        j = i
-        cycles = 0
-        on_ms_list: List[int] = []
-        off_ms_list: List[int] = []
-
-        while j + 1 < len(runs):
-            on_run = runs[j]
-            if on_run[0] != "on":
-                break
-
-            on_len_ms = int(round((on_run[2] - on_run[1]) * 1000))
-            if not (min_on_ms <= on_len_ms <= max_on_ms):
-                break
-            on_ms_list.append(on_len_ms)
-
-            if j + 1 >= len(runs):
-                j += 1
-                break
-
-            off_run = runs[j + 1]
-            if off_run[0] != "off":
-                break
-
-            off_len_ms = int(round((off_run[2] - off_run[1]) * 1000))
-            if not (min_off_ms <= off_len_ms <= max_off_ms):
-                j += 1
-                break
-
-            off_ms_list.append(off_len_ms)
-            cycles += 1
-            j += 2
-
-        if cycles >= min_cycles:
-            end_idx = max(i, j - 1) if j - 1 < len(runs) else i
-            s = round(runs[i][1], 2)
-            e = round(runs[end_idx][2], 2)
-            hits.append({
-                "tone_id": f"pl_{pl_id}",
-                "detected": round(center_hz, 1),
-                "start": s,
-                "end": e,
-                "length": round(e - s, 2),
-                "cycles": cycles,
-                "on_ms_median": int(np.median(on_ms_list)) if on_ms_list else 0,
-                "off_ms_median": int(np.median(off_ms_list)) if off_ms_list else 0,
-            })
-            pl_id += 1
-            i = max(j, i + 1)
+    # ---------- coalesce runs of same state ----------
+    raw_states = [classify_group(g) for g in groups]
+    runs: List[Tuple[str, float, float]] = []
+    for st, s, e, _r in raw_states:
+        if not runs:
+            runs.append((st, s, e))
         else:
-            i += 1
+            last_st, last_s, last_e = runs[-1]
+            if st == last_st and s <= last_e + 1e-6:
+                runs[-1] = (last_st, last_s, max(last_e, e))
+            else:
+                runs.append((st, s, e))
+
+    # ---------- split by 'other' and scan each chunk for ON/OFF cycles ----------
+    chunks: List[List[Tuple[str, float, float]]] = []
+    buf: List[Tuple[str, float, float]] = []
+    for r in runs:
+        if r[0] == "other":
+            if buf: chunks.append(buf); buf = []
+        else:
+            buf.append(r)
+    if buf: chunks.append(buf)
+
+    hits: List[Dict[str, Any]] = []
+    pl_id = 1
+
+    def ms(d): return int(round(d * 1000))
+
+    for chunk in chunks:
+        i = 0
+        while i + 1 < len(chunk):
+            if chunk[i][0] != "on":
+                i += 1
+                continue
+            j = i
+            cycles = 0
+            on_ms_list, off_ms_list = [], []
+
+            while j + 1 < len(chunk):
+                # ON
+                on_run = chunk[j]
+                if on_run[0] != "on": break
+                on_len = ms(on_run[2] - on_run[1])
+                if not (min_on_ms <= on_len <= max_on_ms):
+                    break
+                on_ms_list.append(on_len)
+
+                # OFF
+                if j + 1 >= len(chunk):
+                    j += 1
+                    break
+                off_run = chunk[j + 1]
+                if off_run[0] != "off":
+                    break
+                off_len = ms(off_run[2] - off_run[1])
+                if not (min_off_ms <= off_len <= max_off_ms):
+                    j += 1
+                    break
+
+                off_ms_list.append(off_len)
+                cycles += 1
+                j += 2
+
+            if cycles >= min_cycles:
+                end_idx = max(i, min(j - 1, len(chunk) - 1))
+                s, e = round(chunk[i][1], 2), round(chunk[end_idx][2], 2)
+                hits.append({
+                    "tone_id": f"pl_{pl_id}",
+                    "detected": round(center_hz, 1),
+                    "start": s,
+                    "end": e,
+                    "length": round(e - s, 2),
+                    "cycles": cycles,
+                    "on_ms_median": int(np.median(on_ms_list)) if on_ms_list else 0,
+                    "off_ms_median": int(np.median(off_ms_list)) if off_ms_list else 0,
+                })
+                pl_id += 1
+                i = max(j, i + 1)
+            else:
+                i += 1
 
     return hits
 
