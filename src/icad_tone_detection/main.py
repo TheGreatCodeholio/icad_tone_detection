@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.6"
+__version__ = "2.8.7"
 
 
 @dataclass
