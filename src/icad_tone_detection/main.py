@@ -19,7 +19,7 @@ from .tone_detection import (
     detect_pulsed_single_tone, detect_two_tone_tones,
 )
 
-__version__ = "2.8.7"
+__version__ = "2.9.0"
 
 
 @dataclass
@@ -168,10 +168,13 @@ def tone_detect(
         mdc_low_pass=4000,
 
         detect_dtmf=True,
+        dtmf_high_pass: int = 0,
+        dtmf_low_pass: int = 0,
         dtmf_min_ms: int = 100,
         dtmf_merge_ms: int = 75,
         dtmf_start_offset_ms: int = -20,
         dtmf_end_offset_ms: int = 20,
+        dtmf_sequence_gap_s: float = 0.3,
 
         debug=False,
 ):
@@ -325,6 +328,9 @@ def tone_detect(
         dtmf_end_offset_ms : int, default 20
             [ms] Presentation offset applied to reported DTMF end timestamps.
 
+        dtmf_sequence_gap_s : float, default 0.3
+            [s] Maximum allowed gap between consecutive key presses to be considered part of the same DTMF sequence. Smaller values split sequences more aggressively.
+
         debug : bool, default False
             If True, print a detailed dump of grouped frequencies and a summary of detections.
 
@@ -465,6 +471,7 @@ Time Resolution (ms):      {time_resolution_ms}
     Merge gap ms:           {dtmf_merge_ms}
     Start offset ms:        {dtmf_start_offset_ms}
     End   offset ms:        {dtmf_end_offset_ms}
+    Sequence gap (s):      {dtmf_sequence_gap_s}
 
 Total Duration (s):        {duration_seconds:.2f}
 Sample Rate (Hz):          {frame_rate}
@@ -560,12 +567,13 @@ Matched Frequencies ({len(matched_frequencies)} groups):
             dtmf_result = detect_dtmf_tones(
                 audio_segment,
                 binary_path=icad_decode_path,
-                highpass_freq=0,
-                lowpass_freq=0,
+                highpass_freq=dtmf_high_pass,
+                lowpass_freq=dtmf_low_pass,
                 min_ms=dtmf_min_ms,
                 merge_ms=dtmf_merge_ms,
                 start_offset_ms=dtmf_start_offset_ms,
                 end_offset_ms=dtmf_end_offset_ms,
+                sequence_gap_s=dtmf_sequence_gap_s,
             )
         except Exception as e:
             raise ToneDetectionError(f"DTMF detection failed: {e}") from e

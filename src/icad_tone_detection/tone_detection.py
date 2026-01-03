@@ -489,22 +489,60 @@ def detect_dtmf_tones(
         merge_ms: int = 75,
         start_offset_ms: int = -20,
         end_offset_ms: int = 20,
-) -> list[str]:
+        sequence_gap_s: float = 0.3,
+) -> list[dict]:
     """
-    Decode DTMF tones by piping raw audio to an external 'icad_decode' binary.
+        Decode DTMF tones by piping raw audio to an external `icad_decode` binary,
+        then GROUP detected key-presses into **DTMF sequences**.
 
-    :param segment: PyDub AudioSegment (16-bit, 16 kHz, mono recommended).
-    :param binary_path: Path to the 'icad_decode' executable (default 'icad_decode').
-    :param highpass_freq: Frequency (Hz) for high-pass filter. 0 or None to skip.
-    :param lowpass_freq: Frequency (Hz) for low-pass filter. 0 or None to skip.
-    :param min_ms: Minimum key press length (ms).
-    :param merge_ms: Same-digit debounce/merge gap (ms).
-    :param start_offset_ms: Presentation start offset (ms) applied by decoder.
-    :param end_offset_ms: Presentation end offset (ms) applied by decoder.
+        A "sequence" groups consecutive presses if the gap between the end of one press
+        and the start of the next is within the configured threshold:
 
-    :return: dtmf_matches list of dicts, each representing a detected DTMF key press.
-    :raises RuntimeError: if the decode process fails or returns non-zero.
-    :raises ValueError: if the segment is empty.
+            (next_press.start - prev_press.end) <= sequence_gap_s
+
+        Parameters
+        ----------
+        segment : pydub.AudioSegment
+            Audio to decode (16-bit PCM, 16 kHz, mono recommended).
+        binary_path : str, default "icad_decode"
+            Path to the `icad_decode` executable.
+        highpass_freq : int, default 0
+            High-pass filter cutoff in Hz. Use 0 to disable.
+        lowpass_freq : int, default 0
+            Low-pass filter cutoff in Hz. Use 0 to disable.
+        min_ms : int, default 400
+            Minimum DTMF key press length (ms). Shorter detections are suppressed by the decoder.
+        merge_ms : int, default 75
+            Same-digit debounce/merge gap (ms) handled by the decoder.
+        start_offset_ms : int, default -20
+            Presentation start offset (ms) applied by the decoder.
+        end_offset_ms : int, default 20
+            Presentation end offset (ms) applied by the decoder.
+        sequence_gap_s : float, default 0.3
+            Maximum allowed gap (seconds) between consecutive presses to be considered part of the
+            same sequence. Smaller values split sequences more aggressively.
+
+        Returns
+        -------
+        list[dict]
+            A list of **DTMF sequences** in the same dict shape as the decoder output, except
+            `digit` contains the concatenated digits for the whole sequence:
+
+            {
+              "type": "dtmf",
+              "tone_id": "dtmf_0001",
+              "start": "4.970",   # start time of first press in the sequence
+              "end": "5.810",     # end time of last press in the sequence
+              "length": "0.840",  # (end - start)
+              "digit": "1234"     # concatenated digits for the sequence
+            }
+
+        Raises
+        ------
+        RuntimeError
+            If the decode process fails or returns non-zero.
+        ValueError
+            If the AudioSegment is empty (0 ms) or invalid parameters are provided.
     """
 
     if highpass_freq < 0 or lowpass_freq < 0:
@@ -513,25 +551,23 @@ def detect_dtmf_tones(
         raise ValueError("lowpass_freq must be > highpass_freq (or set either to 0 to disable)")
     if not isinstance(binary_path, str) or not binary_path:
         raise ValueError("binary_path must be a non-empty string")
-
-    dtmf_matches = []
+    if sequence_gap_s < 0:
+        raise ValueError("sequence_gap_s must be >= 0")
 
     # Check if the AudioSegment is non-empty
     if len(segment) == 0:
         raise ValueError("The provided AudioSegment is empty (0 ms). Nothing to decode.")
 
-    # Apply High Pass Filter
+    # Apply filters
     if highpass_freq and highpass_freq > 0:
         segment = segment.high_pass_filter(highpass_freq)
-
-    # Apply Low Pass Filter
     if lowpass_freq and lowpass_freq > 0:
         segment = segment.low_pass_filter(lowpass_freq)
 
     raw_data = segment.raw_data
 
     # ----------------------------------------------------------------
-    # 2) Pipe the raw audio bytes into 'icad_decode' via subprocess
+    # 1) Pipe raw audio bytes into 'icad_decode'
     # ----------------------------------------------------------------
     cmd = [
         binary_path, "-m", "dtmf", "-",
@@ -548,13 +584,10 @@ def detect_dtmf_tones(
             stderr=subprocess.PIPE
         )
     except OSError as e:
-        # Catch other OS-level errors (permissions, etc.)
         raise RuntimeError(f"Failed to execute '{binary_path}': {e}") from e
 
-    # Send raw audio to icad_decode
     out, err = proc.communicate(input=raw_data)
 
-    # Check return code
     if proc.returncode != 0:
         raise RuntimeError(
             f"'icad_decode' process exited with code {proc.returncode}.\n"
@@ -562,16 +595,69 @@ def detect_dtmf_tones(
         )
 
     # ----------------------------------------------------------------
-    # 3) Process the icad_decode output
+    # 2) Parse decoder output (raw presses)
     # ----------------------------------------------------------------
+    presses: list[dict] = []
     binary_stdout = out.decode("utf-8", errors="replace")
-    lines = binary_stdout.strip().splitlines()
-
-    for line in lines:
+    for line in binary_stdout.strip().splitlines():
         try:
             obj = json.loads(line)
-            dtmf_matches.append(obj)
+            presses.append(obj)
         except json.JSONDecodeError:
             pass
 
-    return dtmf_matches
+    if not presses:
+        return []
+
+    # ----------------------------------------------------------------
+    # 3) Build sequences (same dict shape, digit=concatenated)
+    # ----------------------------------------------------------------
+    def f(v, default=0.0) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float(default)
+
+    # Sort by start time just in case
+    presses.sort(key=lambda p: f(p.get("start"), 0.0))
+
+    sequences: list[list[dict]] = []
+    cur: list[dict] = []
+
+    for p in presses:
+        s = f(p.get("start"), 0.0)
+        e = f(p.get("end"), s)
+
+        if not cur:
+            cur = [p]
+            continue
+
+        prev = cur[-1]
+        prev_e = f(prev.get("end"), f(prev.get("start"), 0.0))
+
+        gap = max(0.0, s - prev_e)
+        if gap <= sequence_gap_s:
+            cur.append(p)
+        else:
+            sequences.append(cur)
+            cur = [p]
+
+    if cur:
+        sequences.append(cur)
+
+    out_sequences: list[dict] = []
+    for i, seq in enumerate(sequences, start=1):
+        s0 = f(seq[0].get("start"), 0.0)
+        e1 = f(seq[-1].get("end"), s0)
+        digits = "".join(str(p.get("digit") or "") for p in seq)
+
+        out_sequences.append({
+            "type": "dtmf",
+            "tone_id": f"dtmf_{i:04d}",
+            "start": f"{s0:.3f}",
+            "end": f"{e1:.3f}",
+            "length": f"{(e1 - s0):.3f}",
+            "digit": digits,
+        })
+
+    return out_sequences

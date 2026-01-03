@@ -26,10 +26,13 @@ Examples:
   # Override DTMF detection behavior (min press, merge window, and timestamp offsets)
   icad-tone-detect ivr.wav \
     --detect_dtmf true \
+    --dtmf_high_pass 300 \
+    --dtmf_low_pass 3500 \
     --dtmf_min_ms 120 \
     --dtmf_merge_ms 60 \
     --dtmf_start_offset_ms -15 \
-    --dtmf_end_offset_ms 25
+    --dtmf_end_offset_ms 25 \
+    --dtmf_sequence_gap_s 0.3
 """
 from __future__ import annotations
 
@@ -195,6 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Enable/disable DTMF detection (default: true)")
 
     # DTMF decoder controls
+    p.add_argument("--dtmf_high_pass", type=int, default=0, metavar="HZ",
+                   help="High-pass filter for DTMF (default: 0 = disabled)")
+    p.add_argument("--dtmf_low_pass", type=int, default=0, metavar="HZ",
+                   help="Low-pass filter for DTMF (default: 0 = disabled)")
     p.add_argument("--dtmf_min_ms", type=int, default=100, metavar="MS",
                    help="Minimum DTMF keypress duration (default: 100 ms)")
     p.add_argument("--dtmf_merge_ms", type=int, default=75, metavar="MS",
@@ -203,6 +210,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Presentation offset applied to DTMF start times (default: -20 ms)")
     p.add_argument("--dtmf_end_offset_ms", type=int, default=20, metavar="MS",
                    help="Presentation offset applied to DTMF end times (default: 20 ms)")
+    p.add_argument("--dtmf_sequence_gap_s", type=float, default=0.3, metavar="SEC",
+                   help="Group presses into sequences if the gap (next.start - prev.end) "
+                        "<= SEC (default: 0.3 s)")
 
     # -------- Misc --------
     p.add_argument("-d", "--debug", action="store_true",
@@ -270,10 +280,13 @@ def main(argv: list[str] | None = None) -> None:
         detect_dtmf=args.detect_dtmf,
 
         # DTMF controls
+        dtmf_high_pass=args.dtmf_high_pass,
+        dtmf_low_pass=args.dtmf_low_pass,
         dtmf_min_ms=args.dtmf_min_ms,
         dtmf_merge_ms=args.dtmf_merge_ms,
         dtmf_start_offset_ms=args.dtmf_start_offset_ms,
         dtmf_end_offset_ms=args.dtmf_end_offset_ms,
+        dtmf_sequence_gap_s=args.dtmf_sequence_gap_s,
 
         # Misc
         debug=args.debug,
